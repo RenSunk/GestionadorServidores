@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -122,17 +123,46 @@ type Result struct {
 	ExitCode int
 }
 
-// Run ejecuta cmd en una sesión nueva. Si ctx se cancela, la sesión se cierra.
+// Run ejecuta cmd en una sesión nueva y devuelve la salida completa.
 func Run(ctx context.Context, client *ssh.Client, cmd string) (Result, error) {
 	session, err := client.NewSession()
 	if err != nil {
 		return Result{}, fmt.Errorf("abrir sesión: %w", err)
 	}
+	return runBuffered(ctx, session, cmd)
+}
+
+func runBuffered(ctx context.Context, session *ssh.Session, cmd string) (Result, error) {
+	var stdout, stderr bytes.Buffer
+	code, err := Exec(ctx, session, cmd, ExecOptions{Stdout: &stdout, Stderr: &stderr})
+	return Result{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: code}, err
+}
+
+// ExecOptions configura una ejecución en streaming.
+type ExecOptions struct {
+	Stdin  io.Reader
+	Stdout io.Writer // nil = se descarta
+	Stderr io.Writer // nil = se descarta
+	// PTY pide una terminal. Al cerrar la sesión, el proceso remoto recibe SIGHUP
+	// y muere; sin PTY, un comando como `docker logs -f` podría quedar vivo en el
+	// servidor. La PTY mezcla stderr con stdout, y no sirve con stdin binario.
+	PTY bool
+}
+
+// Exec ejecuta cmd en session (y la cierra al terminar). Devuelve el código de salida.
+// Si ctx se cancela, cierra la sesión y retorna de inmediato: los writers deben
+// tolerar escrituras concurrentes tardías.
+func Exec(ctx context.Context, session *ssh.Session, cmd string, opts ExecOptions) (int, error) {
 	defer session.Close()
 
-	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
+	session.Stdin = opts.Stdin
+	session.Stdout = opts.Stdout
+	session.Stderr = opts.Stderr
+	if opts.PTY {
+		if err := session.RequestPty("xterm", 50, 250, ssh.TerminalModes{ssh.ECHO: 0}); err != nil {
+			return -1, fmt.Errorf("pedir terminal: %w", err)
+		}
+	}
 
 	done := make(chan error, 1)
 	go func() { done <- session.Run(cmd) }()
@@ -140,16 +170,22 @@ func Run(ctx context.Context, client *ssh.Client, cmd string) (Result, error) {
 	select {
 	case <-ctx.Done():
 		_ = session.Close()
-		return Result{}, ctx.Err()
+		return -1, ctx.Err()
 	case err := <-done:
-		res := Result{Stdout: stdout.String(), Stderr: stderr.String()}
 		var exitErr *ssh.ExitError
 		if errors.As(err, &exitErr) {
-			res.ExitCode = exitErr.ExitStatus()
-			return res, nil
+			return exitErr.ExitStatus(), nil
 		}
-		return res, err
+		if err != nil {
+			return -1, err
+		}
+		return 0, nil
 	}
+}
+
+// Quote escapa s para usarlo como un único argumento en sh.
+func Quote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // Fingerprint devuelve la huella SHA256 de una llave en formato authorized_keys.
@@ -202,23 +238,32 @@ func NewPool() *Pool {
 	return &Pool{clients: make(map[string]*ssh.Client)}
 }
 
-// Run ejecuta cmd en el servidor id, abriendo la conexión con dial si no hay una.
-// Si falla una conexión reutilizada (p. ej. el servidor se reinició), reintenta una vez.
-func (p *Pool) Run(ctx context.Context, id string, dial func(context.Context) (*ssh.Client, error), cmd string) (Result, error) {
+// Session abre una sesión en el servidor id, conectando con dial si hace falta.
+// Si la conexión reutilizada está muerta (p. ej. el servidor se reinició), reconecta una vez.
+func (p *Pool) Session(ctx context.Context, id string, dial func(context.Context) (*ssh.Client, error)) (*ssh.Session, error) {
 	for attempt := 0; ; attempt++ {
 		client, reused, err := p.get(ctx, id, dial)
 		if err != nil {
-			return Result{}, err
+			return nil, err
 		}
-		res, err := Run(ctx, client, cmd)
-		if err == nil || ctx.Err() != nil {
-			return res, err
+		session, err := client.NewSession()
+		if err == nil {
+			return session, nil
 		}
 		p.drop(id, client)
 		if !reused || attempt > 0 {
-			return res, err
+			return nil, fmt.Errorf("abrir sesión: %w", err)
 		}
 	}
+}
+
+// Run ejecuta cmd en el servidor id y devuelve la salida completa.
+func (p *Pool) Run(ctx context.Context, id string, dial func(context.Context) (*ssh.Client, error), cmd string) (Result, error) {
+	session, err := p.Session(ctx, id, dial)
+	if err != nil {
+		return Result{}, err
+	}
+	return runBuffered(ctx, session, cmd)
 }
 
 func (p *Pool) get(ctx context.Context, id string, dial func(context.Context) (*ssh.Client, error)) (*ssh.Client, bool, error) {

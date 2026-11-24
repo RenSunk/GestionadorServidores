@@ -274,17 +274,49 @@ func (s *Service) probe(ctx context.Context, srv Server) {
 }
 
 func (s *Service) runOnServer(ctx context.Context, srv Server) (SystemInfo, Metrics, error) {
-	target, err := s.target(srv)
+	dial, err := s.dialer(srv)
 	if err != nil {
 		return SystemInfo{}, Metrics{}, err
-	}
-	dial := func(ctx context.Context) (*ssh.Client, error) {
-		c, _, err := sshx.Dial(ctx, target)
-		return c, err
 	}
 	return runProbe(func(cmd string) (sshx.Result, error) {
 		return s.pool.Run(ctx, srv.ID, dial, cmd)
 	})
+}
+
+func (s *Service) dialer(srv Server) (func(context.Context) (*ssh.Client, error), error) {
+	target, err := s.target(srv)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) (*ssh.Client, error) {
+		c, _, err := sshx.Dial(ctx, target)
+		return c, err
+	}, nil
+}
+
+// Exec ejecuta un comando en el servidor en streaming (lo usan otros módulos,
+// p. ej. proyectos para hacer build y ver logs). Reutiliza la conexión del pool.
+func (s *Service) Exec(ctx context.Context, serverID, cmd string, opts sshx.ExecOptions) (int, error) {
+	srv, err := s.store.Get(ctx, serverID)
+	if err != nil {
+		return -1, err
+	}
+	dial, err := s.dialer(srv)
+	if err != nil {
+		return -1, err
+	}
+	session, err := s.pool.Session(ctx, srv.ID, dial)
+	if err != nil {
+		return -1, err
+	}
+	return sshx.Exec(ctx, session, cmd, opts)
+}
+
+// Run ejecuta un comando en el servidor y devuelve la salida completa.
+func (s *Service) Run(ctx context.Context, serverID, cmd string) (sshx.Result, error) {
+	var stdout, stderr strings.Builder
+	code, err := s.Exec(ctx, serverID, cmd, sshx.ExecOptions{Stdout: &stdout, Stderr: &stderr})
+	return sshx.Result{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: code}, err
 }
 
 func runProbe(run func(cmd string) (sshx.Result, error)) (SystemInfo, Metrics, error) {

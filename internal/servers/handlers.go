@@ -160,7 +160,7 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, ErrNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, ErrDuplicateName):
+	case errors.Is(err, ErrDuplicateName), errors.Is(err, ErrHasProjects):
 		httpx.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		slog.Error("servers: error interno", "err", err)

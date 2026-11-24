@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { api, type Health } from '../lib/api.ts'
+import { useProjects } from '../lib/projects.ts'
 import { useServers } from '../lib/servers.ts'
 
 export function DashboardPage() {
@@ -10,6 +11,9 @@ export function DashboardPage() {
     refetchInterval: 10_000,
   })
   const servers = useServers()
+  const projects = useProjects()
+  const running = projects.data?.filter((p) => p.lastDeployment?.status === 'succeeded').length ?? 0
+  const failed = projects.data?.filter((p) => p.lastDeployment?.status === 'failed') ?? []
 
   const total = servers.data?.length ?? 0
   const online = servers.data?.filter((s) => s.status === 'online').length ?? 0
@@ -22,11 +26,11 @@ export function DashboardPage() {
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Stat label="Servidores en línea" value={servers.data ? `${online} de ${total}` : '…'} />
+        <Stat label="Proyectos con deploy exitoso" value={projects.data ? `${running} de ${projects.data.length}` : '…'} />
         <Stat
-          label="API"
-          value={health.isPending ? '…' : health.isError ? 'Sin conexión' : health.data.status === 'ok' ? 'Operativa' : 'Degradada'}
+          label="Instancia"
+          value={health.isPending ? '…' : health.isError ? 'Sin conexión' : `${health.data.database} · ${health.data.version}`}
         />
-        <Stat label="Base de datos" value={health.data ? `${health.data.database} · ${health.data.version}` : '—'} />
       </div>
 
       {offline.length > 0 && (
@@ -42,6 +46,25 @@ export function DashboardPage() {
                   {s.name}
                 </Link>
                 <span className="ml-2 text-zinc-500">{s.lastError}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {failed.length > 0 && (
+        <div className="mt-4 rounded-lg border border-[#d03b3b]/50 bg-[#d03b3b]/10 p-4 text-sm">
+          <div className="font-medium">
+            <span className="mr-1.5 text-[#d03b3b]">✕</span>
+            {failed.length === 1 ? '1 proyecto con el último deploy fallido' : `${failed.length} proyectos con el último deploy fallido`}
+          </div>
+          <ul className="mt-2 space-y-1">
+            {failed.map((p) => (
+              <li key={p.id}>
+                <Link to={`/projects/${p.id}/deployments/${p.lastDeployment!.id}`} className="text-zinc-200 underline hover:text-white">
+                  {p.name}
+                </Link>
+                <span className="ml-2 text-zinc-500">{p.lastDeployment!.error}</span>
               </li>
             ))}
           </ul>

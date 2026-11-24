@@ -10,7 +10,10 @@ import (
 	"gestionador/internal/database"
 )
 
-var ErrDuplicateName = errors.New("ya existe un servidor con ese nombre")
+var (
+	ErrDuplicateName = errors.New("ya existe un servidor con ese nombre")
+	ErrHasProjects   = errors.New("el servidor tiene proyectos; elimínalos primero")
+)
 
 type Store struct {
 	db *database.DB
@@ -106,6 +109,9 @@ func (st *Store) RecordCheckFailed(ctx context.Context, id, reason string, at ti
 func (st *Store) Delete(ctx context.Context, id string) error {
 	res, err := st.db.ExecContext(ctx, `DELETE FROM servers WHERE id = $1`, id)
 	if err != nil {
+		if isForeignKeyViolation(err) {
+			return ErrHasProjects
+		}
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
@@ -119,4 +125,9 @@ func (st *Store) Delete(ctx context.Context, id string) error {
 func isUniqueViolation(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "UNIQUE constraint failed") || strings.Contains(msg, "SQLSTATE 23505")
+}
+
+func isForeignKeyViolation(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "FOREIGN KEY constraint failed") || strings.Contains(msg, "SQLSTATE 23503")
 }

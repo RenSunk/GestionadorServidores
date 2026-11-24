@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 
 	"gestionador/internal/config"
 	"gestionador/internal/database"
+	"gestionador/internal/projects"
 	"gestionador/internal/secrets"
 	"gestionador/internal/server"
 	"gestionador/internal/servers"
@@ -74,11 +76,19 @@ func run() error {
 	}()
 	defer func() { stop(); <-monitorDone }()
 
+	projectsSvc, err := projects.NewService(ctx, projects.NewStore(db), serversSvc, box, cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	// stop() cancela los deploys en curso; Wait espera a que guarden su estado.
+	defer func() { stop(); projectsSvc.Wait() }()
+
 	srv := server.New(server.Deps{
 		DB:      db,
 		Version: version,
 		Modules: []server.Module{
 			servers.NewHandler(serversSvc),
+			projects.NewHandler(projectsSvc),
 		},
 	})
 
@@ -86,6 +96,9 @@ func run() error {
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		// Las peticiones heredan ctx: al apagar se cortan los streams SSE (logs en vivo)
+		// en lugar de bloquear el Shutdown.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	errCh := make(chan error, 1)

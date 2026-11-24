@@ -51,6 +51,8 @@ internal/
   httpx/                Helpers HTTP compartidos (JSON, errores)
   secrets/              Cifrado AES-256-GCM de datos sensibles
   server/               Router HTTP, health y middlewares
+  gitx/                 Clonado con go-git y empaquetado del contexto (.dockerignore)
+  projects/             Módulo de proyectos: deploys, rollback, logs en vivo (SSE)
   servers/              Módulo de servidores: CRUD, sondeo SSH y monitor
   settings/             Ajustes clave/valor de la instancia
   sshx/                 Cliente SSH: conexión, TOFU, pool de conexiones
@@ -69,11 +71,22 @@ web/                    Frontend React + Vite + Tailwind
 - **Monitor:** cada 15 s se ejecuta un script POSIX por SSH que lee `/proc`, `df` y `docker version`. No se instala nada en el servidor. El historial de 30 min vive en memoria.
 - Solo servidores Linux.
 
+## Proyectos y deploys (fase 2)
+
+Flujo de un deploy:
+
+1. **Clonar**: la instancia clona el repo (rama elegida, solo el último commit) con go-git. Repos privados por HTTPS + token; el token nunca sale de la instancia.
+2. **Build**: el contexto (sin `.git` y respetando `.dockerignore`) viaja como tar por SSH a `docker build -` en el servidor. El servidor no necesita git.
+3. **Publicar**: detiene el contenedor `gs-<proyecto>`, arranca el nuevo y verifica que siga vivo a los 5 s. Si falla, **restaura el anterior**. Esta fase no se puede cancelar para no dejar la app caída.
+4. **Limpiar**: conserva las últimas 3 imágenes del proyecto.
+
+Los logs del build y del contenedor se ven en vivo (Server-Sent Events). Un solo deploy a la vez por proyecto. Hay un corte breve entre detener el contenedor viejo y arrancar el nuevo; el despliegue sin corte llega con los dominios (fase 4).
+
 ## Roadmap
 
 - [x] Fase 0 — Estructura: binario único, SQLite/Postgres, migraciones, cifrado de secretos
 - [x] Fase 1 — Registrar servidores por SSH y ver sus recursos
-- [ ] Fase 2 — Proyectos desde Git con Dockerfile: build, deploy y logs
+- [x] Fase 2 — Proyectos desde Git con Dockerfile: build, deploy y logs
 - [ ] Fase 3 — Variables de entorno, límites de CPU/RAM, historial y rollback
 - [ ] Fase 4 — Dominios + SSL automático con Caddy
 - [ ] Fase 5 — Detección automática sin Dockerfile, webhooks de Git

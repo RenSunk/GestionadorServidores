@@ -35,3 +35,11 @@ export function formatRelative(iso: string | null): string {
 export function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
+
+export function formatDuration(fromIso: string | null, toIso: string | null): string {
+  if (!fromIso) return '—'
+  const ms = (toIso ? new Date(toIso).getTime() : Date.now()) - new Date(fromIso).getTime()
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s} s`
+  return `${Math.floor(s / 60)} min ${s % 60} s`
+}

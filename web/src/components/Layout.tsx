@@ -6,7 +6,7 @@ type NavItem = { to: string; label: string; soon?: boolean }
 const nav: NavItem[] = [
   { to: '/', label: 'Dashboard' },
   { to: '/servers', label: 'Servidores' },
-  { to: '/projects', label: 'Proyectos', soon: true },
+  { to: '/projects', label: 'Proyectos' },
   { to: '/settings', label: 'Configuración', soon: true },
 ]
 
