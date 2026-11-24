@@ -20,6 +20,8 @@ type Deps struct {
 	DB      *database.DB
 	Version string
 	Modules []Module
+	// Guard envuelve el router (autenticación y permisos); recibe el mux para conocer la ruta.
+	Guard func(*http.ServeMux) http.Handler
 }
 
 type Server struct {
@@ -45,7 +47,11 @@ func (s *Server) Handler() http.Handler {
 	// --- Frontend (SPA) ---
 	mux.Handle("/", web.Handler())
 
-	return recoverPanics(logRequests(mux))
+	var h http.Handler = mux
+	if s.deps.Guard != nil {
+		h = s.deps.Guard(mux)
+	}
+	return recoverPanics(logRequests(securityHeaders(h)))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +88,15 @@ func logRequests(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		slog.Debug("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "dur", time.Since(start))
+	})
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
 	})
 }
 

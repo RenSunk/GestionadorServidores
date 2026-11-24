@@ -1,3 +1,4 @@
+import { useCan } from '../lib/auth.ts'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router'
 import { DeploymentBadge } from '../components/DeploymentBadge.tsx'
@@ -11,6 +12,7 @@ export function DeploymentPage() {
   const project = useProject(id)
   const { data: d, isPending, isError, error } = useDeployment(deploymentId)
   const cancel = useCancelDeployment(deploymentId)
+  const can = useCan()
 
   if (isPending) return <p className="text-sm text-zinc-500">Cargando…</p>
   if (isError) return <p className="text-sm text-red-400">{error.message}</p>
@@ -42,7 +44,7 @@ export function DeploymentPage() {
             Iniciado {formatRelative(d.createdAt)} · Duración {formatDuration(d.startedAt, d.finishedAt)}
           </p>
         </div>
-        {running && (
+        {running && can('developer') && (
           <div className="flex flex-col items-end gap-1">
             <button
               onClick={() => cancel.mutate()}

@@ -1,3 +1,4 @@
+import { useCan } from '../lib/auth.ts'
 import { type FormEvent, useState } from 'react'
 import { Link } from 'react-router'
 import {
@@ -18,11 +19,12 @@ export function DomainsPanel({ project: p }: { project: ProjectDetail }) {
   const { data: domains, isPending, error } = useDomains(p.id)
   const proxy = useProxyInfo(p.serverId)
   const neverDeployed = !p.deployments.some((d) => d.status === 'succeeded')
+  const can = useCan()
   const httpsSuffix = proxy.data && proxy.data.httpsPort !== 443 ? `:${proxy.data.httpsPort}` : ''
 
   return (
     <div className="space-y-4">
-      <AddDomainForm project={p} />
+      {can('developer') && <AddDomainForm project={p} />}
 
       {p.hostPort != null && (domains?.length ?? 0) > 0 && (
         <p className="rounded-md border border-[#fab219]/30 bg-[#fab219]/5 p-3 text-sm text-zinc-300">
@@ -121,6 +123,7 @@ function AddDomainForm({ project: p }: { project: ProjectDetail }) {
 function DomainRow({ domain: d, project: p, httpsSuffix }: { domain: Domain; project: ProjectDetail; httpsSuffix: string }) {
   const check = useCheckDomain()
   const remove = useRemoveDomain(p.id)
+  const can = useCan()
 
   function onRemove() {
     if (!confirm(`¿Quitar ${d.hostname}? Dejará de responder de inmediato.`)) return
@@ -143,6 +146,7 @@ function DomainRow({ domain: d, project: p, httpsSuffix }: { domain: Domain; pro
             {d.tlsMode === 'auto' ? "Let's Encrypt" : 'Certificado interno'}
           </span>
         </div>
+        {can('developer') && (
         <div className="flex gap-2">
           <button
             onClick={() => check.mutate(d.id)}
@@ -159,6 +163,7 @@ function DomainRow({ domain: d, project: p, httpsSuffix }: { domain: Domain; pro
             Quitar
           </button>
         </div>
+        )}
       </div>
       {check.data && <CheckResult result={check.data} />}
       {check.isError && <p className="mt-2 text-xs text-red-400">{check.error.message}</p>}

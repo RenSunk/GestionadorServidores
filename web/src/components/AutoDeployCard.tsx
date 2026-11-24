@@ -104,7 +104,7 @@ function AutoDeployDetails({ project: p, info, save }: { project: ProjectDetail;
             <span className="mr-1.5 text-[#fab219]">▲</span>
             Estás usando Gestionador en <span className="font-mono">{window.location.host}</span>, que no es accesible desde internet:
             el proveedor de Git no podrá entregar el webhook. Usa la revisión periódica de abajo, o abre Gestionador con su dirección
-            pública. Todavía no tiene usuarios ni contraseña, así que no lo expongas a internet sin protegerlo.
+            pública (siempre con HTTPS).
           </p>
         )}
 

@@ -125,7 +125,26 @@ En la configuración del proyecto, **Deploy automático** despliega la rama cada
 
 Si llega un push durante un deploy, queda uno en cola y se despliega al terminar. El historial indica qué disparó cada deploy y la interfaz muestra el resultado del último webhook (aceptado, ignorado por la rama o rechazado por la firma).
 
-> Gestionador todavía no tiene usuarios (fase 6): no lo expongas completo a internet. Si necesitas webhooks antes, publica solo la ruta `/hooks/` detrás de un proxy.
+> Para recibir webhooks, Gestionador debe ser accesible desde internet. Exponlo siempre con HTTPS (por ejemplo, detrás de Caddy) para que la cookie de sesión no viaje en claro.
+
+## Usuarios y roles (fase 6)
+
+Gestionador exige iniciar sesión. Al arrancar sin cuentas, la primera visita crea la del **administrador**. Desde otra máquina, pide además el **código de instalación** que aparece en el log, así nadie puede reclamar una instancia recién expuesta.
+
+| Rol | Puede |
+|---|---|
+| Administrador | Todo: servidores, proxy, eliminar proyectos y gestionar usuarios |
+| Desarrollador | Crear, configurar y desplegar proyectos; variables, dominios y deploy automático |
+| Solo lectura | Ver servidores, proyectos, deploys y logs. No ve variables ni el secreto del webhook |
+
+- **Invitaciones:** un administrador crea un enlace para un email y un rol. Vale 7 días, se usa una vez y no requiere configurar correo.
+- **Sesiones:** cookie `HttpOnly` y `SameSite=Lax` (`Secure` con HTTPS), con el token guardado como SHA-256. Se renuevan con el uso, vencen a los 30 días, se cierran al deshabilitar al usuario y, al cambiar la contraseña, se cierran todas las demás.
+- **Protección:**
+  - contraseñas con bcrypt;
+  - límite de intentos fallidos por IP y email;
+  - rechazo de escrituras desde otros sitios (CSRF);
+  - siempre queda al menos un administrador activo.
+- **Autoría:** los permisos se aplican en el servidor por ruta. El historial muestra quién hizo cada deploy manual.
 
 ## Roadmap
 
@@ -136,4 +155,6 @@ Si llega un push durante un deploy, queda uno en cola y se despliega al terminar
 - [x] Fase 3 — Variables de entorno, límites de CPU/RAM, edición y rollback
 - [x] Fase 4 — Dominios + SSL automático con Caddy (Let's Encrypt verificado en un servidor real) y deploy sin corte
 - [x] Fase 5 — Webhooks de Git (deploy automático al hacer push)
-- [ ] Fase 6 — Usuarios, equipos y permisos; métricas históricas y alertas
+- [x] Fase 6 — Usuarios, sesiones, invitaciones y roles
+- [ ] Fase 7 — Equipos (acceso por proyecto o servidor)
+- [ ] Fase 8 — Métricas históricas y alertas

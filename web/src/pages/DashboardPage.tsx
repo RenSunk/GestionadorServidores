@@ -1,3 +1,4 @@
+import { useCan } from '../lib/auth.ts'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { api, type Health } from '../lib/api.ts'
@@ -5,6 +6,7 @@ import { useProjects } from '../lib/projects.ts'
 import { useServers } from '../lib/servers.ts'
 
 export function DashboardPage() {
+  const can = useCan()
   const health = useQuery({
     queryKey: ['health'],
     queryFn: () => api<Health>('/health'),
@@ -75,9 +77,11 @@ export function DashboardPage() {
         <div className="mt-6 rounded-lg border border-dashed border-zinc-800 p-6 text-sm">
           <p className="font-medium">Empieza agregando un servidor</p>
           <p className="mt-1 text-zinc-400">Necesitas acceso SSH a una máquina Linux.</p>
-          <Link to="/servers/new" className="mt-3 inline-block text-zinc-200 underline hover:text-white">
-            Agregar servidor
-          </Link>
+          {can('admin') && (
+            <Link to="/servers/new" className="mt-3 inline-block text-zinc-200 underline hover:text-white">
+              Agregar servidor
+            </Link>
+          )}
         </div>
       )}
     </div>

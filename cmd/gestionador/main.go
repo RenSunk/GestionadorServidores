@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"gestionador/internal/auth"
 	"gestionador/internal/config"
 	"gestionador/internal/database"
 	"gestionador/internal/projects"
@@ -92,13 +93,25 @@ func run() error {
 	}()
 	defer func() { stop(); <-pollerDone }()
 
+	authSvc, err := auth.NewService(ctx, auth.NewStore(db))
+	if err != nil {
+		return err
+	}
+	go authSvc.RunCleanup(ctx)
+	if code := authSvc.SetupCode(); code != "" {
+		slog.Warn("todavía no hay cuentas: abre Gestionador en el navegador para crear la del administrador. "+
+			"Desde otra máquina te pedirá este código de instalación", "código", code)
+	}
+
 	srv := server.New(server.Deps{
 		DB:      db,
 		Version: version,
 		Modules: []server.Module{
+			auth.NewHandler(authSvc),
 			servers.NewHandler(serversSvc),
 			projects.NewHandler(projectsSvc),
 		},
+		Guard: authSvc.Middleware,
 	})
 
 	httpServer := &http.Server{

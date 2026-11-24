@@ -1,3 +1,4 @@
+import { useCan } from '../lib/auth.ts'
 import { useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
@@ -30,6 +31,7 @@ export function ProjectDetailPage() {
   const { id = '' } = useParams()
   const { data: p, isPending, isError, error } = useProject(id)
   const [tab, setTab] = useState<Tab>('deployments')
+  const can = useCan()
 
   if (isPending) return <p className="text-sm text-zinc-500">Cargando…</p>
   if (isError) {
@@ -60,7 +62,10 @@ export function ProjectDetailPage() {
             ['domains', 'Dominios'],
             ['settings', 'Configuración'],
           ] as const
-        ).map(([key, label]) => (
+        )
+          // Configuración muestra secretos (variables, webhook): solo desarrolladores y administradores.
+          .filter(([key]) => key !== 'settings' || can('developer'))
+          .map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -79,7 +84,7 @@ export function ProjectDetailPage() {
           <LogViewer url={`/api/projects/${p.id}/logs?tail=300`} emptyText="Esperando logs del contenedor…" />
         )}
         {tab === 'domains' && <DomainsPanel project={p} />}
-        {tab === 'settings' && <Settings project={p} />}
+        {tab === 'settings' && can('developer') && <Settings project={p} />}
       </div>
     </div>
   )
@@ -90,7 +95,8 @@ function PendingBanner({ project: p }: { project: ProjectDetail }) {
   const navigate = useNavigate()
   const deploy = useDeploy(p.id)
   const restart = useRestart(p.id)
-  if (!p.pending.build && !p.pending.runtime) return null
+  const can = useCan()
+  if ((!p.pending.build && !p.pending.runtime) || !can('developer')) return null
 
   const go = (d: Deployment) => navigate(`/projects/${p.id}/deployments/${d.id}`)
   const busy = !!p.activeDeploymentId || deploy.isPending || restart.isPending
@@ -135,6 +141,7 @@ function Header({ project: p }: { project: ProjectDetail }) {
   const navigate = useNavigate()
   const deploy = useDeploy(p.id)
   const active = p.activeDeploymentId
+  const can = useCan()
 
   return (
     <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
@@ -165,6 +172,7 @@ function Header({ project: p }: { project: ProjectDetail }) {
             Ver deploy en curso
           </Link>
         ) : (
+          can('developer') && (
           <button
             onClick={() => deploy.mutate(undefined, { onSuccess: (d) => navigate(`/projects/${p.id}/deployments/${d.id}`) })}
             disabled={deploy.isPending}
@@ -172,6 +180,7 @@ function Header({ project: p }: { project: ProjectDetail }) {
           >
             {deploy.isPending ? 'Iniciando…' : 'Desplegar'}
           </button>
+          )
         )}
         {deploy.isError && <p className="text-xs text-red-400">{deploy.error.message}</p>}
       </div>
@@ -246,6 +255,7 @@ function DeploymentsList({ project: p }: { project: ProjectDetail }) {
   const navigate = useNavigate()
   const { data: st } = useContainerStatus(p.id)
   const redeploy = useRedeploy()
+  const can = useCan()
 
   if (p.deployments.length === 0) {
     return <p className="text-sm text-zinc-500">Todavía no hay deploys. Pulsa “Desplegar” para el primero.</p>
@@ -268,7 +278,7 @@ function DeploymentsList({ project: p }: { project: ProjectDetail }) {
       <ul className="divide-y divide-zinc-800 overflow-hidden rounded-lg border border-zinc-800">
         {p.deployments.map((d) => {
           const isCurrent = d.id === currentId
-          const canRestore = d.status === 'succeeded' && !isCurrent && available.has(imageTag(d))
+          const canRestore = can('developer') && d.status === 'succeeded' && !isCurrent && available.has(imageTag(d))
           return (
             <li key={d.id} className="grid grid-cols-[1fr_auto] items-center hover:bg-zinc-900/50">
               <Link to={`/projects/${p.id}/deployments/${d.id}`} className="grid grid-cols-[8rem_1fr_auto] items-center gap-4 px-4 py-3 text-sm">
@@ -280,6 +290,7 @@ function DeploymentsList({ project: p }: { project: ProjectDetail }) {
                     {d.sourceDeploymentId && <span>↺ sin rebuild · </span>}
                     {d.trigger === 'webhook' && <span>⚡ push{d.triggeredBy ? ` de ${d.triggeredBy}` : ''} · </span>}
                     {d.trigger === 'poll' && <span>⟳ revisión automática · </span>}
+                    {d.trigger === 'manual' && d.triggeredBy && <span>por {d.triggeredBy} · </span>}
                     {formatRelative(d.createdAt)}
                   </div>
                 </div>
@@ -312,6 +323,7 @@ function Settings({ project: p }: { project: ProjectDetail }) {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const del = useDeleteProject()
+  const can = useCan()
   const env = useEnv(p.id)
   const buildArgs = (env.data ?? []).filter((v) => v.build).map((v) => v.key)
 
@@ -349,6 +361,7 @@ function Settings({ project: p }: { project: ProjectDetail }) {
         </dl>
       </section>
 
+      {can('admin') && (
       <section className="rounded-lg border border-[#d03b3b]/40 p-4">
         <h2 className="text-sm font-medium">Eliminar proyecto</h2>
         <p className="mt-1 text-sm text-zinc-400">Detiene y borra el contenedor y las imágenes en el servidor. No se puede deshacer.</p>
@@ -362,6 +375,7 @@ function Settings({ project: p }: { project: ProjectDetail }) {
         {p.activeDeploymentId && <p className="mt-2 text-xs text-zinc-500">Espera a que termine el deploy en curso.</p>}
         {del.isError && <p className="mt-2 text-sm text-red-400">{del.error.message}</p>}
       </section>
+      )}
     </div>
   )
 }

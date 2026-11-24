@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router'
+import { ROLE_LABELS, useLogout, useMe } from '../lib/auth.ts'
 
 type NavItem = { to: string; label: string; soon?: boolean }
 
@@ -7,7 +8,7 @@ const nav: NavItem[] = [
   { to: '/', label: 'Dashboard' },
   { to: '/servers', label: 'Servidores' },
   { to: '/projects', label: 'Proyectos' },
-  { to: '/settings', label: 'Configuración', soon: true },
+  { to: '/settings', label: 'Configuración' },
 ]
 
 export function Layout() {
@@ -41,10 +42,32 @@ export function Layout() {
             ),
           )}
         </nav>
+        <UserMenu />
       </aside>
       <main className="flex-1 overflow-y-auto p-8">
         <Outlet />
       </main>
+    </div>
+  )
+}
+
+function UserMenu() {
+  const { data: me } = useMe()
+  const logout = useLogout()
+  if (!me) return null
+  return (
+    <div className="mt-auto border-t border-zinc-800 px-2 pt-4">
+      <div className="truncate text-sm text-zinc-200">{me.name}</div>
+      <div className="truncate text-xs text-zinc-500">
+        {me.email} · {ROLE_LABELS[me.role]}
+      </div>
+      <button
+        onClick={() => logout.mutate()}
+        disabled={logout.isPending}
+        className="mt-2 text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-50"
+      >
+        Cerrar sesión
+      </button>
     </div>
   )
 }

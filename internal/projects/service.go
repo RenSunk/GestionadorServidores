@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"gestionador/internal/auth"
 	"gestionador/internal/buildspec"
 	"gestionador/internal/gitx"
 	"gestionador/internal/proxy"
@@ -443,7 +444,13 @@ func (s *Service) GetDeployment(ctx context.Context, id string) (Deployment, err
 
 // Deploy clona, construye y publica la rama del proyecto en segundo plano.
 func (s *Service) Deploy(ctx context.Context, projectID string) (Deployment, error) {
-	return s.DeployWith(ctx, projectID, Trigger{Kind: TriggerManual})
+	return s.DeployWith(ctx, projectID, Trigger{Kind: TriggerManual, By: actor(ctx)})
+}
+
+// actor es el nombre del usuario que hace la petición ("" fuera de una petición).
+func actor(ctx context.Context) string {
+	u, _ := auth.UserFrom(ctx)
+	return u.Name
 }
 
 // DeployWith es Deploy registrando qué lo disparó.
@@ -484,6 +491,8 @@ func (s *Service) Redeploy(ctx context.Context, sourceID string) (Deployment, er
 		CommitMessage:      src.CommitMessage,
 		Image:              src.Image,
 		SourceDeploymentID: src.ID,
+		Trigger:            TriggerManual,
+		TriggeredBy:        actor(ctx),
 		CreatedAt:          time.Now().UTC(),
 	})
 }

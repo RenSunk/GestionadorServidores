@@ -1,3 +1,4 @@
+import { useCan } from '../lib/auth.ts'
 import { Link } from 'react-router'
 import { Meter } from '../components/Meter.tsx'
 import { StatusBadge } from '../components/StatusBadge.tsx'
@@ -5,6 +6,7 @@ import { formatRelative } from '../lib/format.ts'
 import { type Server, useServers, usagePercent } from '../lib/servers.ts'
 
 export function ServersPage() {
+  const can = useCan()
   const { data: servers, isPending, isError, error } = useServers()
 
   return (
@@ -14,9 +16,11 @@ export function ServersPage() {
           <h1 className="text-2xl font-semibold">Servidores</h1>
           <p className="mt-1 text-sm text-zinc-400">Máquinas donde se despliegan tus proyectos.</p>
         </div>
-        <Link to="/servers/new" className="rounded-md bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-white">
-          Agregar servidor
-        </Link>
+        {can('admin') && (
+          <Link to="/servers/new" className="rounded-md bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-white">
+            Agregar servidor
+          </Link>
+        )}
       </div>
 
       <div className="mt-6">
@@ -80,13 +84,16 @@ function DockerLabel({ server }: { server: Server }) {
 }
 
 function EmptyState() {
+  const can = useCan()
   return (
     <div className="rounded-lg border border-dashed border-zinc-800 p-10 text-center">
       <p className="font-medium">Aún no hay servidores</p>
       <p className="mt-1 text-sm text-zinc-400">Agrega tu primer servidor para empezar a desplegar proyectos.</p>
-      <Link to="/servers/new" className="mt-4 inline-block text-sm text-zinc-200 underline hover:text-white">
-        Agregar servidor
-      </Link>
+      {can('admin') && (
+        <Link to="/servers/new" className="mt-4 inline-block text-sm text-zinc-200 underline hover:text-white">
+          Agregar servidor
+        </Link>
+      )}
     </div>
   )
 }

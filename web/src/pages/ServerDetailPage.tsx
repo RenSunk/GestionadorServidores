@@ -1,3 +1,4 @@
+import { useCan } from '../lib/auth.ts'
 import type { ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { CopyButton } from '../components/CopyButton.tsx'
@@ -9,6 +10,7 @@ import { formatBytes, formatRelative, formatUptime } from '../lib/format.ts'
 import { type ServerDetail, useCheckServer, useDeleteServer, useServer, usagePercent } from '../lib/servers.ts'
 
 export function ServerDetailPage() {
+  const can = useCan()
   const { id = '' } = useParams()
   const { data: s, isPending, isError, error } = useServer(id)
 
@@ -89,7 +91,7 @@ export function ServerDetailPage() {
         </dl>
       </section>
 
-      {s.system.dockerStatus === 'running' && <ProxyCard serverId={s.id} />}
+      {s.system.dockerStatus === 'running' && can('admin') && <ProxyCard serverId={s.id} />}
     </div>
   )
 }
@@ -112,6 +114,7 @@ function Header({ server: s }: { server: ServerDetail }) {
   const navigate = useNavigate()
   const check = useCheckServer(s.id)
   const del = useDeleteServer()
+  const can = useCan()
 
   function onDelete() {
     if (!confirm(`¿Eliminar el servidor "${s.name}"? Gestionador dejará de monitorearlo. No se borra nada en el servidor.`)) return
@@ -131,6 +134,7 @@ function Header({ server: s }: { server: ServerDetail }) {
         </p>
       </div>
       <div className="flex gap-2">
+        {can('developer') && (
         <button
           onClick={() => check.mutate()}
           disabled={check.isPending}
@@ -138,6 +142,8 @@ function Header({ server: s }: { server: ServerDetail }) {
         >
           {check.isPending ? 'Verificando…' : 'Verificar ahora'}
         </button>
+        )}
+        {can('admin') && (
         <button
           onClick={onDelete}
           disabled={del.isPending}
@@ -145,6 +151,7 @@ function Header({ server: s }: { server: ServerDetail }) {
         >
           Eliminar
         </button>
+        )}
       </div>
       {del.isError && <p className="w-full text-sm text-red-400">{del.error.message}</p>}
     </div>

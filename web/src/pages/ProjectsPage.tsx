@@ -1,9 +1,11 @@
+import { useCan } from '../lib/auth.ts'
 import { Link } from 'react-router'
 import { DeploymentBadge } from '../components/DeploymentBadge.tsx'
 import { formatRelative } from '../lib/format.ts'
 import { type Project, repoName, useProjects } from '../lib/projects.ts'
 
 export function ProjectsPage() {
+  const can = useCan()
   const { data: projects, isPending, isError, error } = useProjects()
 
   return (
@@ -13,9 +15,11 @@ export function ProjectsPage() {
           <h1 className="text-2xl font-semibold">Proyectos</h1>
           <p className="mt-1 text-sm text-zinc-400">Aplicaciones desplegadas desde Git con Docker.</p>
         </div>
-        <Link to="/projects/new" className="rounded-md bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-white">
-          Nuevo proyecto
-        </Link>
+        {can('developer') && (
+          <Link to="/projects/new" className="rounded-md bg-zinc-100 px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-white">
+            Nuevo proyecto
+          </Link>
+        )}
       </div>
 
       <div className="mt-6">
@@ -25,9 +29,11 @@ export function ProjectsPage() {
           <div className="rounded-lg border border-dashed border-zinc-800 p-10 text-center">
             <p className="font-medium">Aún no hay proyectos</p>
             <p className="mt-1 text-sm text-zinc-400">Conecta un repositorio con Dockerfile y despliégalo en uno de tus servidores.</p>
-            <Link to="/projects/new" className="mt-4 inline-block text-sm text-zinc-200 underline hover:text-white">
-              Nuevo proyecto
-            </Link>
+            {can('developer') && (
+              <Link to="/projects/new" className="mt-4 inline-block text-sm text-zinc-200 underline hover:text-white">
+                Nuevo proyecto
+              </Link>
+            )}
           </div>
         )}
         {projects && projects.length > 0 && (
