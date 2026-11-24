@@ -2,10 +2,7 @@ import { NavLink, Outlet } from 'react-router'
 import { useAlerts } from '../lib/alerts.ts'
 import { ROLE_LABELS, useLogout, useMe } from '../lib/auth.ts'
 
-type NavItem = { to: string; label: string; soon?: boolean }
-
-// Las secciones marcadas como "soon" se habilitan a medida que avanzamos por fases.
-const nav: NavItem[] = [
+const nav = [
   { to: '/', label: 'Dashboard' },
   { to: '/servers', label: 'Servidores' },
   { to: '/projects', label: 'Proyectos' },
@@ -20,40 +17,30 @@ export function Layout() {
       <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-800 p-4">
         <div className="mb-8 px-2 text-lg font-semibold tracking-tight">Gestionador</div>
         <nav className="flex flex-col gap-1">
-          {nav.map((item) =>
-            item.soon ? (
-              <span
-                key={item.to}
-                className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm text-zinc-600"
-              >
+          {nav.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/'}
+              className={({ isActive }) =>
+                `rounded-md px-2 py-1.5 text-sm ${
+                  isActive ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
+                }`
+              }
+            >
+              <span className="flex items-center justify-between">
                 {item.label}
-                <span className="text-[10px] uppercase tracking-wide">pronto</span>
+                {item.to === '/alerts' && !!openAlerts?.length && (
+                  <span
+                    className="rounded-full bg-[#d03b3b] px-1.5 text-[11px] font-medium tabular-nums text-white"
+                    aria-label={`${openAlerts.length} alertas activas`}
+                  >
+                    {openAlerts.length}
+                  </span>
+                )}
               </span>
-            ) : (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === '/'}
-                className={({ isActive }) =>
-                  `rounded-md px-2 py-1.5 text-sm ${
-                    isActive ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'
-                  }`
-                }
-              >
-                <span className="flex items-center justify-between">
-                  {item.label}
-                  {item.to === '/alerts' && !!openAlerts?.length && (
-                    <span
-                      className="rounded-full bg-[#d03b3b] px-1.5 text-[11px] font-medium tabular-nums text-white"
-                      aria-label={`${openAlerts.length} alertas activas`}
-                    >
-                      {openAlerts.length}
-                    </span>
-                  )}
-                </span>
-              </NavLink>
-            ),
-          )}
+            </NavLink>
+          ))}
         </nav>
         <UserMenu />
       </aside>

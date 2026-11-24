@@ -21,6 +21,8 @@ type Config struct {
 	// Solo se acepta por variable de entorno, nunca por flag (los flags son visibles en `ps`).
 	SecretKey string
 	LogLevel  slog.Level
+	// ShowVersion: imprimir la versión y salir (-version).
+	ShowVersion bool
 }
 
 func Load(args []string) (Config, error) {
@@ -37,6 +39,7 @@ func Load(args []string) (Config, error) {
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "directorio de datos (env GESTIONADOR_DATA_DIR)")
 	fs.StringVar(&cfg.DatabaseURL, "database-url", cfg.DatabaseURL, "URL de base de datos; vacío = SQLite (env GESTIONADOR_DATABASE_URL)")
 	fs.StringVar(&level, "log-level", level, "debug, info, warn o error (env GESTIONADOR_LOG_LEVEL)")
+	fs.BoolVar(&cfg.ShowVersion, "version", false, "imprime la versión y sale")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}

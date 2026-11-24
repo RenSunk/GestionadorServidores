@@ -39,7 +39,7 @@ export function ServersPage() {
   )
 }
 
-function ServerCard({ server: s }: { server: Server }) {
+export function ServerCard({ server: s }: { server: Server }) {
   const m = s.metrics
   return (
     <Link

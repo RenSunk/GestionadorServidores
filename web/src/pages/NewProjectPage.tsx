@@ -247,7 +247,7 @@ export function NewProjectPage() {
                   className={inputClass}
                 />
               </Field>
-              <Field label="Puerto publicado en el servidor" hint="Opcional. Vacío = no se expone (los dominios llegan en la fase 4).">
+              <Field label="Puerto publicado en el servidor" hint="Opcional. Vacío = no se expone; para recibir tráfico por un dominio no hace falta publicarlo.">
                 <input
                   type="number"
                   min={1}

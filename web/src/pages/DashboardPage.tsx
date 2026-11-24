@@ -1,8 +1,12 @@
+import type { ReactNode } from 'react'
 import { useCan } from '../lib/auth.ts'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { api, type Health } from '../lib/api.ts'
+import { AlertsList } from '../components/AlertsList.tsx'
 import { useAlerts } from '../lib/alerts.ts'
+import { ProjectsTable } from './ProjectsPage.tsx'
+import { ServerCard } from './ServersPage.tsx'
 import { useProjects } from '../lib/projects.ts'
 import { useServers } from '../lib/servers.ts'
 
@@ -15,6 +19,7 @@ export function DashboardPage() {
   })
   const servers = useServers()
   const alerts = useAlerts('open')
+  const history = useAlerts()
   const projects = useProjects()
   const running = projects.data?.filter((p) => p.lastDeployment?.status === 'succeeded').length ?? 0
   const failed = projects.data?.filter((p) => p.lastDeployment?.status === 'failed') ?? []
@@ -24,7 +29,7 @@ export function DashboardPage() {
   const offline = servers.data?.filter((s) => s.status === 'offline') ?? []
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-6xl">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
       <p className="mt-1 text-sm text-zinc-400">Resumen de la instancia.</p>
 
@@ -78,6 +83,30 @@ export function DashboardPage() {
         </div>
       )}
 
+      {!!servers.data?.length && (
+        <Panel title="Servidores" to="/servers">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {servers.data.map((s) => (
+              <ServerCard key={s.id} server={s} />
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {!!projects.data?.length && (
+        <Panel title="Proyectos" to="/projects">
+          <ProjectsTable projects={projects.data} />
+        </Panel>
+      )}
+
+      {!!history.data?.length && (
+        <Panel title="Alertas recientes" to="/alerts">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-4 py-1">
+            <AlertsList alerts={history.data.slice(0, 4)} />
+          </div>
+        </Panel>
+      )}
+
       {servers.data?.length === 0 && (
         <div className="mt-6 rounded-lg border border-dashed border-zinc-800 p-6 text-sm">
           <p className="font-medium">Empieza agregando un servidor</p>
@@ -90,6 +119,20 @@ export function DashboardPage() {
         </div>
       )}
     </div>
+  )
+}
+
+function Panel({ title, to, children }: { title: string; to: string; children: ReactNode }) {
+  return (
+    <section className="mt-8">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-sm font-medium text-zinc-200">{title}</h2>
+        <Link to={to} className="text-xs text-zinc-500 hover:text-zinc-300">
+          Ver todo →
+        </Link>
+      </div>
+      {children}
+    </section>
   )
 }
 

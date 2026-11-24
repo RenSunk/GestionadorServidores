@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -32,7 +33,9 @@ import (
 var version = "dev"
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(); errors.Is(err, flag.ErrHelp) {
+		return // -h: la ayuda ya se imprimió
+	} else if err != nil {
 		slog.Error("error fatal", "err", err)
 		os.Exit(1)
 	}
@@ -42,6 +45,10 @@ func run() error {
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
 		return err
+	}
+	if cfg.ShowVersion {
+		fmt.Println("gestionador", version)
+		return nil
 	}
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})))

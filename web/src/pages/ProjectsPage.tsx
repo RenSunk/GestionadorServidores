@@ -36,26 +36,30 @@ export function ProjectsPage() {
             )}
           </div>
         )}
-        {projects && projects.length > 0 && (
-          <div className="overflow-hidden rounded-lg border border-zinc-800">
-            <table className="w-full text-sm">
-              <thead className="bg-zinc-900/60 text-left text-xs text-zinc-500">
-                <tr>
-                  <th className="px-4 py-2 font-normal">Proyecto</th>
-                  <th className="px-4 py-2 font-normal">Servidor</th>
-                  <th className="px-4 py-2 font-normal">Último deploy</th>
-                  <th className="px-4 py-2 font-normal">URL</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800">
-                {projects.map((p) => (
-                  <ProjectRow key={p.id} project={p} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {projects && projects.length > 0 && <ProjectsTable projects={projects} />}
       </div>
+    </div>
+  )
+}
+
+export function ProjectsTable({ projects }: { projects: Project[] }) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-zinc-800">
+      <table className="w-full text-sm">
+        <thead className="bg-zinc-900/60 text-left text-xs text-zinc-500">
+          <tr>
+            <th className="px-4 py-2 font-normal">Proyecto</th>
+            <th className="px-4 py-2 font-normal">Servidor</th>
+            <th className="px-4 py-2 font-normal">Último deploy</th>
+            <th className="px-4 py-2 font-normal">URL</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-800">
+          {projects.map((p) => (
+            <ProjectRow key={p.id} project={p} />
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
