@@ -1,0 +1,40 @@
+# Unidad systemd para Gestionador. Ver docs/instalacion.md.
+#   sudo cp deploy/gestionador.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now gestionador
+[Unit]
+Description=Gestionador (PaaS autoalojado)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gestionador
+Group=gestionador
+ExecStart=/usr/local/bin/gestionador
+EnvironmentFile=-/etc/gestionador/env
+Environment=GESTIONADOR_ADDR=127.0.0.1:8080
+Environment=GESTIONADOR_DATA_DIR=/var/lib/gestionador
+StateDirectory=gestionador
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+# SIGINT apaga ordenadamente: espera a que los deploys en curso guarden su estado.
+KillSignal=SIGINT
+TimeoutStopSec=90
+
+# Endurecimiento: solo escribe en /var/lib/gestionador.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

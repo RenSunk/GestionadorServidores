@@ -1,0 +1,10 @@
+# Gestionador detrás de Caddy con HTTPS automático (Let's Encrypt).
+# El DNS de panel.tudominio.com debe apuntar a esta máquina y los puertos 80/443 estar abiertos.
+#   sudo cp deploy/Caddyfile.example /etc/caddy/Caddyfile && sudo systemctl reload caddy
+panel.tudominio.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8080 {
+		# Los logs en vivo usan Server-Sent Events: sin buffer.
+		flush_interval -1
+	}
+}
