@@ -2,6 +2,7 @@ import { useCan } from '../lib/auth.ts'
 import { useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
+import { AccessBadge } from '../components/AccessBadge.tsx'
 import { DeploymentBadge } from '../components/DeploymentBadge.tsx'
 import { ProjectDockerfile } from '../components/DockerfilePreview.tsx'
 import { DomainsPanel } from '../components/DomainsPanel.tsx'
@@ -146,7 +147,10 @@ function Header({ project: p }: { project: ProjectDetail }) {
   return (
     <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold">{p.name}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-semibold">{p.name}</h1>
+          <AccessBadge kind="project" id={p.id} />
+        </div>
         <p className="mt-1 text-sm text-zinc-400">
           <a href={p.repoUrl} target="_blank" rel="noreferrer" className="hover:text-zinc-200 hover:underline">
             {repoName(p.repoUrl)}

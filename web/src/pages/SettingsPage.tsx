@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from 'react'
 import { ErrorBox, Field } from '../components/Form.tsx'
+import { TeamsSection } from '../components/TeamsSection.tsx'
 import {
   type Invite,
   ROLE_HINTS,
@@ -32,6 +33,7 @@ export function SettingsPage() {
       <h1 className="text-2xl font-semibold">Configuración</h1>
       <Account />
       {can('admin') && <Team />}
+      {can('admin') && <TeamsSection />}
     </div>
   )
 }

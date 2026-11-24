@@ -28,7 +28,8 @@ const (
 )
 
 type Service struct {
-	store *Store
+	store  *Store
+	scopes ScopeSource // nil = sin equipos (todos ven todo)
 
 	mu        sync.Mutex
 	setupCode string // vacío cuando ya hay usuarios
@@ -53,6 +54,9 @@ func NewService(ctx context.Context, store *Store) (*Service, error) {
 	}
 	return s, nil
 }
+
+// SetScopes conecta los equipos: limitan qué proyectos y servidores ve cada usuario.
+func (s *Service) SetScopes(src ScopeSource) { s.scopes = src }
 
 // SetupCode es el código para crear la primera cuenta desde otra máquina ("" si ya hay usuarios).
 func (s *Service) SetupCode() string {

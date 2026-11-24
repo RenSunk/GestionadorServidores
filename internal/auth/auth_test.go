@@ -236,3 +236,19 @@ func TestMiddleware(t *testing.T) {
 		t.Errorf("el usuario no llegó al handler: %q", body)
 	}
 }
+
+func TestResourceOf(t *testing.T) {
+	for _, c := range []struct{ pattern, path, kind, id string }{
+		{"GET /api/projects/{id}/env", "/api/projects/abc/env", "projects", "abc"},
+		{"GET /api/servers/{id}", "/api/servers/s1", "servers", "s1"},
+		{"GET /api/deployments/{id}/logs", "/api/deployments/d1/logs", "deployments", "d1"},
+		{"DELETE /api/domains/{id}", "/api/domains/x", "domains", "x"},
+		{"POST /api/projects/detect", "/api/projects/detect", "", ""},
+		{"GET /api/projects", "/api/projects", "", ""},
+		{"PATCH /api/users/{id}", "/api/users/u", "", ""},
+	} {
+		if k, id := resourceOf(c.pattern, c.path); k != c.kind || id != c.id {
+			t.Errorf("%s: (%q, %q)", c.pattern, k, id)
+		}
+	}
+}

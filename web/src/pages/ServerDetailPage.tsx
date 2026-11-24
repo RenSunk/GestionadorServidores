@@ -1,4 +1,5 @@
 import { useCan } from '../lib/auth.ts'
+import { AccessBadge } from '../components/AccessBadge.tsx'
 import type { ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { CopyButton } from '../components/CopyButton.tsx'
@@ -127,6 +128,7 @@ function Header({ server: s }: { server: ServerDetail }) {
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold">{s.name}</h1>
           <StatusBadge status={s.status} />
+          <AccessBadge kind="server" id={s.id} />
         </div>
         <p className="mt-1 font-mono text-sm text-zinc-400">
           {s.username}@{s.host}

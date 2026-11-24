@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"gestionador/internal/auth"
 	"gestionador/internal/buildspec"
 	"gestionador/internal/httpx"
 	"gestionador/internal/proxy"
@@ -225,13 +226,17 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	out := make([]projectView, len(list))
-	for i, p := range list {
+	scope := auth.ScopeFrom(r.Context())
+	out := make([]projectView, 0, len(list))
+	for _, p := range list {
+		if !scope.Project(p.ID) {
+			continue
+		}
 		var last *Deployment
 		if d, ok := latest[p.ID]; ok {
 			last = &d
 		}
-		out[i] = h.withDomains(r.Context(), h.view(p, last), p.ServerID)
+		out = append(out, h.withDomains(r.Context(), h.view(p, last), p.ServerID))
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -240,6 +245,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var in CreateInput
 	if err := httpx.DecodeJSON(w, r, &in); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !auth.ScopeFrom(r.Context()).Server(in.ServerID) {
+		httpx.WriteError(w, http.StatusBadRequest, "servidor no encontrado")
 		return
 	}
 	p, err := h.svc.Create(r.Context(), in)

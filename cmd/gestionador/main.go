@@ -23,6 +23,7 @@ import (
 	"gestionador/internal/server"
 	"gestionador/internal/servers"
 	"gestionador/internal/settings"
+	"gestionador/internal/teams"
 )
 
 // version se inyecta al compilar: -ldflags "-X main.version=v1.2.3"
@@ -98,6 +99,8 @@ func run() error {
 		return err
 	}
 	go authSvc.RunCleanup(ctx)
+	teamsSvc := teams.NewService(db)
+	authSvc.SetScopes(teamsSvc)
 	if code := authSvc.SetupCode(); code != "" {
 		slog.Warn("todavía no hay cuentas: abre Gestionador en el navegador para crear la del administrador. "+
 			"Desde otra máquina te pedirá este código de instalación", "código", code)
@@ -108,6 +111,7 @@ func run() error {
 		Version: version,
 		Modules: []server.Module{
 			auth.NewHandler(authSvc),
+			teams.NewHandler(teamsSvc),
 			servers.NewHandler(serversSvc),
 			projects.NewHandler(projectsSvc),
 		},

@@ -2,6 +2,7 @@ package servers
 
 import (
 	"errors"
+	"gestionador/internal/auth"
 	"log/slog"
 	"net/http"
 	"time"
@@ -101,9 +102,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	out := make([]serverView, len(list))
-	for i, s := range list {
-		out[i] = h.view(s)
+	scope := auth.ScopeFrom(r.Context())
+	out := make([]serverView, 0, len(list))
+	for _, s := range list {
+		if scope.Server(s.ID) {
+			out = append(out, h.view(s))
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

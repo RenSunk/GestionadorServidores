@@ -52,6 +52,7 @@ var developer = map[string]bool{
 var adminGET = map[string]bool{
 	"GET /api/users":   true,
 	"GET /api/invites": true,
+	"GET /api/teams":   true,
 }
 
 // Required devuelve el rol mínimo para un patrón del router, o "" si es público.
@@ -102,8 +103,51 @@ func (s *Service) Middleware(mux *http.ServeMux) http.Handler {
 			httpx.WriteError(w, http.StatusForbidden, "tu rol no permite esta acción")
 			return
 		}
-		mux.ServeHTTP(w, r.WithContext(WithUser(r.Context(), u)))
+		scope, err := s.scopeFor(r, u, pattern)
+		if err != nil {
+			slog.Error("cargar equipos", "err", err)
+			httpx.WriteError(w, http.StatusInternalServerError, "error interno")
+			return
+		}
+		if scope == nil {
+			// Fuera del alcance del usuario: se responde como si no existiera.
+			httpx.WriteError(w, http.StatusNotFound, "no encontrado")
+			return
+		}
+		ctx := WithScope(WithUser(r.Context(), u), *scope)
+		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// scopeFor carga el alcance del usuario y comprueba el recurso de la ruta.
+// Devuelve nil si el recurso existe pero el usuario no puede verlo.
+func (s *Service) scopeFor(r *http.Request, u User, pattern string) (*Scope, error) {
+	if u.Role == RoleAdmin || s.scopes == nil {
+		full := FullScope()
+		return &full, nil
+	}
+	scope, err := s.scopes.LoadScope(r.Context(), u.ID)
+	if err != nil {
+		return nil, err
+	}
+	kind, id := resourceOf(pattern, r.URL.Path)
+	ok := true
+	switch kind {
+	case "projects":
+		ok = scope.Project(id)
+	case "servers":
+		ok = scope.Server(id)
+	case "deployments", "domains":
+		pid, err := s.scopes.ProjectOf(r.Context(), kind, id)
+		if err != nil {
+			return nil, err
+		}
+		ok = pid == "" || scope.Project(pid)
+	}
+	if !ok {
+		return nil, nil
+	}
+	return &scope, nil
 }
 
 // sameOrigin rechaza escrituras iniciadas desde otro sitio (CSRF). La cookie además es SameSite=Lax.

@@ -146,6 +146,15 @@ Gestionador exige iniciar sesión. Al arrancar sin cuentas, la primera visita cr
   - siempre queda al menos un administrador activo.
 - **Autoría:** los permisos se aplican en el servidor por ruta. El historial muestra quién hizo cada deploy manual.
 
+## Equipos (fase 7)
+
+El rol define **qué** puede hacer cada persona; los equipos, **sobre qué**. Un administrador los gestiona en **Configuración → Equipos**: cada equipo tiene miembros, proyectos y servidores.
+
+- Un proyecto o servidor **sin equipos es visible para todos**, así que nada cambia hasta crear el primero.
+- Al asignarlo a uno o más equipos, **solo lo ven sus miembros y los administradores**. Para el resto, el recurso y todo lo que cuelga de él (deploys, logs, dominios) responde 404, sin revelar que existe.
+- Para crear un proyecto en un servidor restringido, hay que ser miembro de uno de sus equipos.
+- Las páginas de proyecto y servidor muestran a los administradores quién tiene acceso.
+
 ## Roadmap
 
 - [x] Fase 0 — Estructura: binario único, SQLite/Postgres, migraciones, cifrado de secretos
@@ -156,5 +165,5 @@ Gestionador exige iniciar sesión. Al arrancar sin cuentas, la primera visita cr
 - [x] Fase 4 — Dominios + SSL automático con Caddy (Let's Encrypt verificado en un servidor real) y deploy sin corte
 - [x] Fase 5 — Webhooks de Git (deploy automático al hacer push)
 - [x] Fase 6 — Usuarios, sesiones, invitaciones y roles
-- [ ] Fase 7 — Equipos (acceso por proyecto o servidor)
+- [x] Fase 7 — Equipos (acceso por proyecto o servidor)
 - [ ] Fase 8 — Métricas históricas y alertas
