@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router'
 import { AuthGate } from './components/AuthGate.tsx'
 import { Layout } from './components/Layout.tsx'
+import { AlertsPage } from './pages/AlertsPage.tsx'
 import { InvitePage, LoginPage, SetupPage } from './pages/AuthPages.tsx'
 import { DashboardPage } from './pages/DashboardPage.tsx'
 import { DeploymentPage } from './pages/DeploymentPage.tsx'
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
       { path: 'projects/new', element: <NewProjectPage /> },
       { path: 'projects/:id', element: <ProjectDetailPage /> },
       { path: 'projects/:id/deployments/:deploymentId', element: <DeploymentPage /> },
+      { path: 'alerts', element: <AlertsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],

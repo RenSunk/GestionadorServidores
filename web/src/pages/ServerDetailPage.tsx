@@ -6,7 +6,8 @@ import { CopyButton } from '../components/CopyButton.tsx'
 import { Meter } from '../components/Meter.tsx'
 import { ProxyCard } from '../components/ProxyCard.tsx'
 import { StatusBadge } from '../components/StatusBadge.tsx'
-import { UsageChart } from '../components/UsageChart.tsx'
+import { TargetAlerts } from '../components/AlertsList.tsx'
+import { ServerUsage } from '../components/UsageHistory.tsx'
 import { formatBytes, formatRelative, formatUptime } from '../lib/format.ts'
 import { type ServerDetail, useCheckServer, useDeleteServer, useServer, usagePercent } from '../lib/servers.ts'
 
@@ -36,6 +37,7 @@ export function ServerDetailPage() {
       </Link>
 
       <Header server={s} />
+      <TargetAlerts targetId={s.id} />
 
       {s.status === 'offline' && s.lastError && (
         <div className="mt-6 rounded-md border border-[#d03b3b]/50 bg-[#d03b3b]/10 p-3 text-sm text-zinc-200">
@@ -71,12 +73,7 @@ export function ServerDetailPage() {
         </section>
       )}
 
-      <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
-        <h2 className="text-sm font-medium">Uso en los últimos 30 minutos</h2>
-        <div className="mt-3">
-          <UsageChart points={s.history} />
-        </div>
-      </section>
+      <ServerUsage serverId={s.id} live={s.history} />
 
       <section className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
         <h2 className="text-sm font-medium">Sistema</h2>

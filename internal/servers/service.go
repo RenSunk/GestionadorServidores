@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 
+	"gestionador/internal/metrics"
 	"gestionador/internal/secrets"
 	"gestionador/internal/settings"
 	"gestionador/internal/sshx"
@@ -37,8 +38,12 @@ type Service struct {
 	pool        *sshx.Pool
 	instanceKey ssh.Signer
 
-	mu        sync.RWMutex
-	snapshots map[string]*snapshot
+	recorder *metrics.Recorder // nil = sin historial
+	observer Observer          // nil = sin alertas
+
+	mu           sync.RWMutex
+	snapshots    map[string]*snapshot
+	containersAt map[string]time.Time // último sondeo de contenedores por servidor
 }
 
 type snapshot struct {
@@ -52,11 +57,12 @@ func NewService(ctx context.Context, store *Store, settingsStore *settings.Store
 		return nil, fmt.Errorf("llave SSH de la instancia: %w", err)
 	}
 	return &Service{
-		store:       store,
-		box:         box,
-		pool:        sshx.NewPool(),
-		instanceKey: key,
-		snapshots:   make(map[string]*snapshot),
+		store:        store,
+		box:          box,
+		pool:         sshx.NewPool(),
+		instanceKey:  key,
+		snapshots:    make(map[string]*snapshot),
+		containersAt: make(map[string]time.Time),
 	}, nil
 }
 
@@ -187,7 +193,13 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	s.pool.Forget(id)
 	s.mu.Lock()
 	delete(s.snapshots, id)
+	delete(s.containersAt, id)
 	s.mu.Unlock()
+	if s.recorder != nil {
+		if err := s.recorder.DeleteServer(ctx, id); err != nil {
+			slog.Warn("borrar historial del servidor", "err", err)
+		}
+	}
 	return nil
 }
 
@@ -264,6 +276,7 @@ func (s *Service) probe(ctx context.Context, srv Server) {
 			snap.latest = nil // no mostramos métricas viejas como si fueran actuales
 		}
 		s.mu.Unlock()
+		s.afterProbe(ctx, srv, info, nil, err)
 		return
 	}
 
@@ -271,6 +284,8 @@ func (s *Service) probe(ctx context.Context, srv Server) {
 		slog.Error("guardar estado del servidor", "err", err)
 	}
 	s.recordMetrics(srv.ID, metrics)
+	srv.Status, srv.System = StatusOnline, info
+	s.afterProbe(ctx, srv, info, &metrics, nil)
 }
 
 func (s *Service) runOnServer(ctx context.Context, srv Server) (SystemInfo, Metrics, error) {

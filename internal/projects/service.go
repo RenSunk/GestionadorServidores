@@ -19,6 +19,7 @@ import (
 	"gestionador/internal/auth"
 	"gestionador/internal/buildspec"
 	"gestionador/internal/gitx"
+	"gestionador/internal/metrics"
 	"gestionador/internal/proxy"
 	"gestionador/internal/secrets"
 	"gestionador/internal/servers"
@@ -54,6 +55,9 @@ type Service struct {
 	running map[string]*activeDeploy // por ID de proyecto
 	queued  map[string]Trigger       // deploy automático pendiente (llegó un push durante otro deploy)
 	polls   map[string]pollState     // última revisión periódica de cada proyecto
+
+	recorder    *metrics.Recorder
+	deployHooks []func(Project, Deployment)
 }
 
 type activeDeploy struct {
@@ -329,6 +333,11 @@ func (s *Service) Delete(ctx context.Context, id string) (warning string, err er
 			warning = strings.TrimSpace(warning + " No se pudo quitar el dominio de Caddy: " + err.Error())
 		}
 	}
+	if s.recorder != nil {
+		if err := s.recorder.DeleteSeries(ctx, metrics.ContainerSeries(p.ServerID, p.containerName())); err != nil {
+			slog.Warn("borrar historial del proyecto", "err", err)
+		}
+	}
 	slog.Info("proyecto eliminado", "id", id, "name", p.Name)
 	return warning, nil
 }
@@ -597,6 +606,8 @@ func (s *Service) run(ctx context.Context, p Project, d Deployment, active *acti
 		slog.Error("guardar resultado del deploy", "deployment", d.ID, "err", err)
 	}
 	slog.Info("deploy terminado", "project", p.Name, "deployment", d.ID, "status", status, "dur", time.Since(start).Round(time.Second))
+	d.Status, d.Error = status, msg
+	s.notifyDeploy(p, d)
 }
 
 func (s *Service) execute(ctx, db context.Context, p Project, d *Deployment, active *activeDeploy) error {

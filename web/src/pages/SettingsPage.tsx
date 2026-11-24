@@ -1,4 +1,5 @@
 import { type FormEvent, useState } from 'react'
+import { AlertSettingsSection } from '../components/AlertSettingsSection.tsx'
 import { ErrorBox, Field } from '../components/Form.tsx'
 import { TeamsSection } from '../components/TeamsSection.tsx'
 import {
@@ -34,6 +35,7 @@ export function SettingsPage() {
       <Account />
       {can('admin') && <Team />}
       {can('admin') && <TeamsSection />}
+      {can('admin') && <AlertSettingsSection />}
     </div>
   )
 }

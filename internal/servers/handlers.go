@@ -3,6 +3,7 @@ package servers
 import (
 	"errors"
 	"gestionador/internal/auth"
+	"gestionador/internal/metrics"
 	"log/slog"
 	"net/http"
 	"time"
@@ -26,6 +27,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/servers/{id}", h.get)
 	mux.HandleFunc("POST /api/servers/{id}/check", h.check)
 	mux.HandleFunc("DELETE /api/servers/{id}", h.delete)
+	mux.HandleFunc("GET /api/servers/{id}/metrics", h.metrics)
 }
 
 // --- Vistas JSON (nunca incluyen credenciales) ---
@@ -170,4 +172,26 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		slog.Error("servers: error interno", "err", err)
 		httpx.WriteError(w, http.StatusInternalServerError, "error interno")
 	}
+}
+
+func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
+	rng, ok := metrics.Ranges[r.URL.Query().Get("range")]
+	if !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "rango inválido: usa 1h, 6h, 24h, 7d o 30d")
+		return
+	}
+	if _, err := h.svc.Get(r.Context(), r.PathValue("id")); err != nil {
+		h.fail(w, err)
+		return
+	}
+	if h.svc.recorder == nil {
+		httpx.WriteJSON(w, http.StatusOK, []metrics.Point{})
+		return
+	}
+	pts, err := h.svc.recorder.Query(r.Context(), metrics.ServerSeries(r.PathValue("id")), rng, time.Now(), 300)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pts)
 }

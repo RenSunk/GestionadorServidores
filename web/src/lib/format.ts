@@ -43,3 +43,23 @@ export function formatDuration(fromIso: string | null, toIso: string | null): st
   if (s < 60) return `${s} s`
   return `${Math.floor(s / 60)} min ${s % 60} s`
 }
+
+/** Hora corta para ejes (14:05) o fecha y hora si el rango abarca días (24 nov 14:00). */
+export function formatAxisTime(ms: number, spanMs: number): string {
+  const d = new Date(ms)
+  if (spanMs <= 26 * 3_600_000) return d.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+export function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+/** Duración aproximada legible: "3 min", "2 h 10 min", "4 días". */
+export function formatSpan(fromIso: string, toIso: string | null): string {
+  const s = Math.max(0, Math.round(((toIso ? new Date(toIso).getTime() : Date.now()) - new Date(fromIso).getTime()) / 1000))
+  if (s < 60) return `${s} s`
+  if (s < 3600) return `${Math.round(s / 60)} min`
+  if (s < 86400) return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`
+  return `${Math.round(s / 86400)} días`
+}

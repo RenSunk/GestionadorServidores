@@ -53,6 +53,8 @@ internal/
   server/               Router HTTP, health y middlewares
   buildspec/            Lenguajes soportados, detección por archivos y Dockerfile generado
   gitx/                 Clonado con go-git y empaquetado del contexto (.dockerignore)
+  alerts/               Alertas: reglas, historial y aviso por webhook
+  metrics/              Historial de uso por minuto y por hora, con retención
   projects/             Módulo de proyectos: deploys, rollback, logs en vivo (SSE)
   servers/              Módulo de servidores: CRUD, sondeo SSH y monitor
   settings/             Ajustes clave/valor de la instancia
@@ -155,6 +157,24 @@ El rol define **qué** puede hacer cada persona; los equipos, **sobre qué**. Un
 - Para crear un proyecto en un servidor restringido, hay que ser miembro de uno de sus equipos.
 - Las páginas de proyecto y servidor muestran a los administradores quién tiene acceso.
 
+## Métricas históricas y alertas (fase 8)
+
+**Historial.** El monitor ya sondea cada servidor cada 15 s; ahora cada muestra se agrega por minuto (promedio y pico) y se guarda en la base. Una vez por minuto también se mide el consumo de cada contenedor de app (los que llevan la etiqueta `gestionador.project`). Los minutos se conservan 48 h y se resumen por hora, que se conserva 90 días. La página del servidor muestra CPU, RAM y disco (en vivo, 1 h, 6 h, 24 h, 7 días o 30 días), y la pestaña **Métricas** de cada proyecto muestra su contenedor. Donde faltan datos (servidor caído, instancia apagada), la línea se corta en lugar de inventar valores.
+
+**Alertas.** Se abren y se cierran solas; hay una sola abierta por tipo y objetivo:
+
+| Alerta | Se abre cuando | Se cierra cuando |
+|---|---|---|
+| Servidor caído | 2 sondeos fallidos seguidos (~30 s) | vuelve a responder |
+| CPU / RAM alta | el promedio de los últimos N minutos (5 por defecto) supera el umbral (90 %) | baja 5 puntos por debajo del umbral |
+| Disco lleno | el disco supera el umbral (90 %) | baja 2 puntos por debajo |
+| App detenida | el contenedor de un proyecto ya desplegado no existe, se detuvo o se reinicia en bucle (se ignora durante un deploy) | vuelve a estar en ejecución |
+| Deploy fallido | un deploy falla (manual, webhook o revisión periódica) | es un evento: queda en el historial |
+
+Las alertas activas aparecen en el menú (con contador), en el dashboard y en la página del servidor o proyecto afectado. Cada persona solo ve las de los recursos de sus equipos. Un administrador ajusta umbrales y tipos en **Configuración → Alertas** y puede indicar un **webhook**: Slack y Discord reciben un mensaje en su formato, y cualquier otra URL recibe JSON (`event`, `text`, `alert`). La URL se guarda cifrada y hay un botón para enviar una prueba.
+
+Las pruebas de métricas y alertas también corren sobre PostgreSQL con `TEST_DATABASE_URL=postgres://… go test ./internal/metrics ./internal/alerts`.
+
 ## Roadmap
 
 - [x] Fase 0 — Estructura: binario único, SQLite/Postgres, migraciones, cifrado de secretos
@@ -166,4 +186,4 @@ El rol define **qué** puede hacer cada persona; los equipos, **sobre qué**. Un
 - [x] Fase 5 — Webhooks de Git (deploy automático al hacer push)
 - [x] Fase 6 — Usuarios, sesiones, invitaciones y roles
 - [x] Fase 7 — Equipos (acceso por proyecto o servidor)
-- [ ] Fase 8 — Métricas históricas y alertas
+- [x] Fase 8 — Métricas históricas y alertas (Slack, Discord o webhook)

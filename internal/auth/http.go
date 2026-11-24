@@ -50,9 +50,10 @@ var developer = map[string]bool{
 
 // adminGET: lecturas reservadas a administradores.
 var adminGET = map[string]bool{
-	"GET /api/users":   true,
-	"GET /api/invites": true,
-	"GET /api/teams":   true,
+	"GET /api/users":          true,
+	"GET /api/invites":        true,
+	"GET /api/teams":          true,
+	"GET /api/alert-settings": true, // incluye la URL del webhook
 }
 
 // Required devuelve el rol mínimo para un patrón del router, o "" si es público.

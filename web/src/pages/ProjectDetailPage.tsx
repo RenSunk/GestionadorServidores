@@ -7,6 +7,8 @@ import { DeploymentBadge } from '../components/DeploymentBadge.tsx'
 import { ProjectDockerfile } from '../components/DockerfilePreview.tsx'
 import { DomainsPanel } from '../components/DomainsPanel.tsx'
 import { AutoDeployCard } from '../components/AutoDeployCard.tsx'
+import { TargetAlerts } from '../components/AlertsList.tsx'
+import { ProjectUsage } from '../components/UsageHistory.tsx'
 import { EnvEditor } from '../components/EnvEditor.tsx'
 import { LogViewer } from '../components/LogViewer.tsx'
 import { Meter } from '../components/Meter.tsx'
@@ -26,7 +28,7 @@ import {
   useRestart,
 } from '../lib/projects.ts'
 
-type Tab = 'deployments' | 'logs' | 'domains' | 'settings'
+type Tab = 'deployments' | 'logs' | 'metrics' | 'domains' | 'settings'
 
 export function ProjectDetailPage() {
   const { id = '' } = useParams()
@@ -53,6 +55,7 @@ export function ProjectDetailPage() {
       </Link>
       <Header project={p} />
       <PendingBanner project={p} />
+      <TargetAlerts targetId={p.id} />
       <ContainerCard project={p} />
 
       <div className="mt-6 flex gap-1 border-b border-zinc-800">
@@ -60,6 +63,7 @@ export function ProjectDetailPage() {
           [
             ['deployments', 'Deploys'],
             ['logs', 'Logs'],
+            ['metrics', 'Métricas'],
             ['domains', 'Dominios'],
             ['settings', 'Configuración'],
           ] as const
@@ -84,6 +88,7 @@ export function ProjectDetailPage() {
         {tab === 'logs' && (
           <LogViewer url={`/api/projects/${p.id}/logs?tail=300`} emptyText="Esperando logs del contenedor…" />
         )}
+        {tab === 'metrics' && <ProjectUsage projectId={p.id} />}
         {tab === 'domains' && <DomainsPanel project={p} />}
         {tab === 'settings' && can('developer') && <Settings project={p} />}
       </div>

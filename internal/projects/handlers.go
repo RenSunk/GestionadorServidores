@@ -44,6 +44,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{id}/status", h.status)
 	mux.HandleFunc("GET /api/projects/{id}/logs", h.containerLogs)
 	mux.HandleFunc("GET /api/projects/{id}/dockerfile", h.projectDockerfile)
+	mux.HandleFunc("GET /api/projects/{id}/metrics", h.metrics)
 
 	mux.HandleFunc("GET /api/projects/{id}/domains", h.listDomains)
 	mux.HandleFunc("POST /api/projects/{id}/domains", h.addDomain)

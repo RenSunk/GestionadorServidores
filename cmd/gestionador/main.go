@@ -14,9 +14,11 @@ import (
 	"syscall"
 	"time"
 
+	"gestionador/internal/alerts"
 	"gestionador/internal/auth"
 	"gestionador/internal/config"
 	"gestionador/internal/database"
+	"gestionador/internal/metrics"
 	"gestionador/internal/projects"
 	"gestionador/internal/proxy"
 	"gestionador/internal/secrets"
@@ -71,6 +73,27 @@ func run() error {
 		return err
 	}
 
+	projectsSvc, err := projects.NewService(ctx, projects.NewStore(db), serversSvc, box, proxy.NewManager(serversSvc), cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	// stop() cancela los deploys en curso; Wait espera a que guarden su estado.
+	defer func() { stop(); projectsSvc.Wait() }()
+
+	// Historial de métricas y alertas: se conectan antes de arrancar el monitor.
+	recorder := metrics.NewRecorder(db)
+	serversSvc.SetRecorder(recorder)
+	projectsSvc.SetRecorder(recorder)
+	alertsSvc, err := alerts.NewService(ctx, db, settings.NewStore(db), box, projectsSvc, serversSvc)
+	if err != nil {
+		return err
+	}
+	serversSvc.SetObserver(alertsSvc)
+	recorder.OnMinute(alertsSvc.MinuteRecorded)
+	projectsSvc.OnDeployFinished(alertsSvc.DeployFinished)
+	go recorder.RunMaintenance(ctx)
+	go alertsSvc.RunReconcile(ctx)
+
 	// El monitor corre en segundo plano y se detiene al cancelar ctx.
 	monitorDone := make(chan struct{})
 	go func() {
@@ -78,13 +101,6 @@ func run() error {
 		serversSvc.RunMonitor(ctx)
 	}()
 	defer func() { stop(); <-monitorDone }()
-
-	projectsSvc, err := projects.NewService(ctx, projects.NewStore(db), serversSvc, box, proxy.NewManager(serversSvc), cfg.DataDir)
-	if err != nil {
-		return err
-	}
-	// stop() cancela los deploys en curso; Wait espera a que guarden su estado.
-	defer func() { stop(); projectsSvc.Wait() }()
 
 	// Revisión periódica de repositorios (deploy automático sin webhook).
 	pollerDone := make(chan struct{})
@@ -112,6 +128,7 @@ func run() error {
 		Modules: []server.Module{
 			auth.NewHandler(authSvc),
 			teams.NewHandler(teamsSvc),
+			alerts.NewHandler(alertsSvc),
 			servers.NewHandler(serversSvc),
 			projects.NewHandler(projectsSvc),
 		},

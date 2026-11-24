@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router'
+import { useAlerts } from '../lib/alerts.ts'
 import { ROLE_LABELS, useLogout, useMe } from '../lib/auth.ts'
 
 type NavItem = { to: string; label: string; soon?: boolean }
@@ -8,10 +9,12 @@ const nav: NavItem[] = [
   { to: '/', label: 'Dashboard' },
   { to: '/servers', label: 'Servidores' },
   { to: '/projects', label: 'Proyectos' },
+  { to: '/alerts', label: 'Alertas' },
   { to: '/settings', label: 'Configuración' },
 ]
 
 export function Layout() {
+  const { data: openAlerts } = useAlerts('open')
   return (
     <div className="flex h-full bg-zinc-950 text-zinc-100">
       <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-800 p-4">
@@ -37,7 +40,17 @@ export function Layout() {
                   }`
                 }
               >
-                {item.label}
+                <span className="flex items-center justify-between">
+                  {item.label}
+                  {item.to === '/alerts' && !!openAlerts?.length && (
+                    <span
+                      className="rounded-full bg-[#d03b3b] px-1.5 text-[11px] font-medium tabular-nums text-white"
+                      aria-label={`${openAlerts.length} alertas activas`}
+                    >
+                      {openAlerts.length}
+                    </span>
+                  )}
+                </span>
               </NavLink>
             ),
           )}

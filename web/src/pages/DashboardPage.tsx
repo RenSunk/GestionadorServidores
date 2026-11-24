@@ -2,6 +2,7 @@ import { useCan } from '../lib/auth.ts'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { api, type Health } from '../lib/api.ts'
+import { useAlerts } from '../lib/alerts.ts'
 import { useProjects } from '../lib/projects.ts'
 import { useServers } from '../lib/servers.ts'
 
@@ -13,6 +14,7 @@ export function DashboardPage() {
     refetchInterval: 10_000,
   })
   const servers = useServers()
+  const alerts = useAlerts('open')
   const projects = useProjects()
   const running = projects.data?.filter((p) => p.lastDeployment?.status === 'succeeded').length ?? 0
   const failed = projects.data?.filter((p) => p.lastDeployment?.status === 'failed') ?? []
@@ -26,9 +28,12 @@ export function DashboardPage() {
       <h1 className="text-2xl font-semibold">Dashboard</h1>
       <p className="mt-1 text-sm text-zinc-400">Resumen de la instancia.</p>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Servidores en línea" value={servers.data ? `${online} de ${total}` : '…'} />
         <Stat label="Proyectos con deploy exitoso" value={projects.data ? `${running} de ${projects.data.length}` : '…'} />
+        <Link to="/alerts" className="block rounded-lg hover:ring-1 hover:ring-zinc-700">
+          <Stat label="Alertas activas" value={alerts.data ? String(alerts.data.length) : '…'} />
+        </Link>
         <Stat
           label="Instancia"
           value={health.isPending ? '…' : health.isError ? 'Sin conexión' : `${health.data.database} · ${health.data.version}`}
