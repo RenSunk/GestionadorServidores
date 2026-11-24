@@ -33,7 +33,7 @@ var catalog = []Runtime{
 	{
 		ID: "node", Label: "Node.js", Versions: []string{"20", "22", "24"}, DefaultVersion: "22", DefaultPort: 3000,
 		BuildPlaceholder: "npm ci && npm run build", StartPlaceholder: "npm start",
-		image: func(v string) string { return "node:" + v + "-slim" },
+		image: func(v string) string { return "docker.io/library/node:" + v + "-slim" },
 		// npm y pnpm leen npm_config_*: más reintentos ante cortes de red del registro.
 		buildEnv: []string{"COREPACK_ENABLE_DOWNLOAD_PROMPT=0", "NEXT_TELEMETRY_DISABLED=1",
 			"npm_config_fetch_retries=5", "npm_config_fetch_retry_mintimeout=20000", "npm_config_fetch_retry_maxtimeout=120000"},
@@ -43,24 +43,24 @@ var catalog = []Runtime{
 	{
 		ID: "python", Label: "Python", Versions: []string{"3.11", "3.12", "3.13"}, DefaultVersion: "3.12", DefaultPort: 8000,
 		BuildPlaceholder: "pip install -r requirements.txt", StartPlaceholder: "gunicorn app:app --bind 0.0.0.0:$PORT",
-		image: func(v string) string { return "python:" + v + "-slim" },
+		image: func(v string) string { return "docker.io/library/python:" + v + "-slim" },
 		buildEnv: []string{"PYTHONUNBUFFERED=1", "PIP_NO_CACHE_DIR=1", "PIP_DISABLE_PIP_VERSION_CHECK=1",
 			"PIP_RETRIES=10", "PIP_DEFAULT_TIMEOUT=60"},
 	},
 	{
 		ID: "java-maven", Label: "Java (Maven)", Versions: []string{"17", "21", "25"}, DefaultVersion: "21", DefaultPort: 8080,
 		BuildPlaceholder: "mvn -B -DskipTests package", StartPlaceholder: "java -jar target/app.jar",
-		image: func(v string) string { return "maven:3-eclipse-temurin-" + v },
+		image: func(v string) string { return "docker.io/library/maven:3-eclipse-temurin-" + v },
 	},
 	{
 		ID: "java-gradle", Label: "Java (Gradle)", Versions: []string{"17", "21", "25"}, DefaultVersion: "21", DefaultPort: 8080,
 		BuildPlaceholder: "gradle build -x test --no-daemon", StartPlaceholder: "java -jar build/libs/app.jar",
-		image: func(v string) string { return "gradle:jdk" + v },
+		image: func(v string) string { return "docker.io/library/gradle:jdk" + v },
 	},
 	{
 		ID: "go", Label: "Go", Versions: []string{"1.25", "1.26", "1.27"}, DefaultVersion: "1.27", DefaultPort: 8080,
 		BuildPlaceholder: "go build -o /app/server .", StartPlaceholder: "/app/server",
-		image: func(v string) string { return "golang:" + v },
+		image: func(v string) string { return "docker.io/library/golang:" + v },
 		// Con "|" se descarga directo del repositorio si el proxy falla por cualquier motivo.
 		buildEnv: []string{"CGO_ENABLED=0", "GOPROXY=https://proxy.golang.org|direct"},
 	},
@@ -144,9 +144,22 @@ func (s *Spec) Normalize() error {
 func (s Spec) Image() string {
 	rt, _ := Find(s.Runtime)
 	if rt.NeedsBaseImage {
-		return s.BaseImage
+		return QualifyImage(s.BaseImage)
 	}
 	return rt.image(s.Version)
+}
+
+// QualifyImage completa el registro de una imagen ("ruby:3.3" → "docker.io/library/ruby:3.3").
+// Docker lo hace solo, pero Podman exige el nombre completo salvo que esté configurado.
+func QualifyImage(ref string) string {
+	first, rest, hasSlash := strings.Cut(ref, "/")
+	if hasSlash && (strings.ContainsAny(first, ".:") || first == "localhost") {
+		return ref // ya incluye registro (ghcr.io/…, mcr.microsoft.com/…, localhost:5000/…)
+	}
+	if !hasSlash {
+		return "docker.io/library/" + ref
+	}
+	return "docker.io/" + first + "/" + rest
 }
 
 // Label describe el entorno, ej. "Node.js 22".

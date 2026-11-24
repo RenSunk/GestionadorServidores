@@ -28,9 +28,11 @@ echo '@@docker'
 if ! command -v docker >/dev/null 2>&1; then
   echo not_installed
 else
-  out=$(docker version --format '{{.Server.Version}}' 2>&1)
-  if [ $? -eq 0 ]; then echo "running $out"
-  elif echo "$out" | grep -qi 'permission denied'; then echo no_permission
+  # stderr aparte: podman-docker imprime "Emulate Docker CLI using podman..." en cada comando.
+  out=$(docker version --format '{{.Server.Version}}' 2>/dev/null | tail -n 1)
+  if [ -n "$out" ]; then
+    if docker --version 2>/dev/null | grep -qi podman; then echo "running podman-$out"; else echo "running $out"; fi
+  elif docker version 2>&1 | grep -qi 'permission denied'; then echo no_permission
   else echo not_running
   fi
 fi

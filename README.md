@@ -107,6 +107,15 @@ Todo se edita desde la pestaña **Configuración** y se aplica en el próximo de
 - **Aplicar sin reconstruir**: los cambios de variables, puertos o límites se aplican recreando el contenedor con la imagen actual (segundos, sin build). Los cambios de build (repo, comandos, variables de build) piden un deploy completo.
 - **Rollback**: desde la lista de deploys se puede volver a cualquiera de las últimas 3 imágenes que siguen en el servidor, sin reconstruir y con la configuración actual.
 
+## Dominios y HTTPS (fase 4)
+
+Cada servidor con dominios tiene un contenedor **Caddy** (`gestionador-caddy`) en la red Docker `gestionador`. Gestionador genera el Caddyfile completo desde la base de datos y lo recarga sin cortar conexiones cada vez que cambia algo.
+
+- **Dominios por proyecto**, cada uno con su certificado: **automático** (Let's Encrypt; requiere que el DNS apunte al servidor y los puertos 80/443 abiertos) o **interno** (CA local de Caddy, para pruebas o redes internas).
+- **Verificar**: comprueba el registro DNS y pide la página por HTTPS directamente al servidor, indicando qué falta (DNS, certificado, app caída).
+- **Deploy sin corte**: si el proyecto tiene dominio y no publica un puerto, el contenedor nuevo arranca junto al actual; cuando responde, Caddy cambia el tráfico y recién entonces se apaga el anterior. Si el nuevo no responde, la versión actual sigue atendiendo.
+- Los puertos de Caddy se pueden cambiar en la página del servidor (por defecto 80/443), útil si ya están ocupados.
+
 ## Roadmap
 
 - [x] Fase 0 — Estructura: binario único, SQLite/Postgres, migraciones, cifrado de secretos
@@ -114,6 +123,6 @@ Todo se edita desde la pestaña **Configuración** y se aplica en el próximo de
 - [x] Fase 2 — Proyectos desde Git con Dockerfile: build, deploy y logs
 - [x] Detección del lenguaje y Dockerfile generado para proyectos sin Dockerfile
 - [x] Fase 3 — Variables de entorno, límites de CPU/RAM, edición y rollback
-- [ ] Fase 4 — Dominios + SSL automático con Caddy
+- [x] Fase 4 — Dominios + SSL con Caddy y deploy sin corte (falta probar Let's Encrypt con un dominio real)
 - [ ] Fase 5 — Webhooks de Git (deploy automático al hacer push)
 - [ ] Fase 6 — Usuarios, equipos y permisos; métricas históricas y alertas

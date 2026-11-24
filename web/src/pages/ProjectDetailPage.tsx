@@ -3,6 +3,7 @@ import { type ReactNode, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { DeploymentBadge } from '../components/DeploymentBadge.tsx'
 import { ProjectDockerfile } from '../components/DockerfilePreview.tsx'
+import { DomainsPanel } from '../components/DomainsPanel.tsx'
 import { EnvEditor } from '../components/EnvEditor.tsx'
 import { LogViewer } from '../components/LogViewer.tsx'
 import { Meter } from '../components/Meter.tsx'
@@ -22,7 +23,7 @@ import {
   useRestart,
 } from '../lib/projects.ts'
 
-type Tab = 'deployments' | 'logs' | 'settings'
+type Tab = 'deployments' | 'logs' | 'domains' | 'settings'
 
 export function ProjectDetailPage() {
   const { id = '' } = useParams()
@@ -55,6 +56,7 @@ export function ProjectDetailPage() {
           [
             ['deployments', 'Deploys'],
             ['logs', 'Logs'],
+            ['domains', 'Dominios'],
             ['settings', 'Configuración'],
           ] as const
         ).map(([key, label]) => (
@@ -75,6 +77,7 @@ export function ProjectDetailPage() {
         {tab === 'logs' && (
           <LogViewer url={`/api/projects/${p.id}/logs?tail=300`} emptyText="Esperando logs del contenedor…" />
         )}
+        {tab === 'domains' && <DomainsPanel project={p} />}
         {tab === 'settings' && <Settings project={p} />}
       </div>
     </div>

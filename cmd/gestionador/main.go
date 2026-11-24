@@ -17,6 +17,7 @@ import (
 	"gestionador/internal/config"
 	"gestionador/internal/database"
 	"gestionador/internal/projects"
+	"gestionador/internal/proxy"
 	"gestionador/internal/secrets"
 	"gestionador/internal/server"
 	"gestionador/internal/servers"
@@ -76,7 +77,7 @@ func run() error {
 	}()
 	defer func() { stop(); <-monitorDone }()
 
-	projectsSvc, err := projects.NewService(ctx, projects.NewStore(db), serversSvc, box, cfg.DataDir)
+	projectsSvc, err := projects.NewService(ctx, projects.NewStore(db), serversSvc, box, proxy.NewManager(serversSvc), cfg.DataDir)
 	if err != nil {
 		return err
 	}

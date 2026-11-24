@@ -45,6 +45,17 @@ export type BuildSpec = {
   buildArgs?: string[]
 }
 
+export type TLSMode = 'auto' | 'internal'
+
+export type Domain = { id: string; projectId: string; hostname: string; tlsMode: TLSMode; createdAt: string }
+
+export type DomainCheck = {
+  dns: { ok: boolean; records: string[]; serverIps: string[]; message: string }
+  https: { ok: boolean; status: number; issuer: string; message: string }
+}
+
+export type ProxyInfo = { httpPort: number; httpsPort: number; state: string; domains: number; error?: string }
+
 export type EnvVar = { key: string; value: string; build: boolean }
 
 export type PendingChanges = { build: boolean; runtime: boolean }
@@ -92,6 +103,7 @@ export type Project = {
   cpuLimit: number | null
   memoryLimitMb: number | null
   url: string
+  domains: string[]
   containerName: string
   createdAt: string
   lastDeployment: Deployment | null
@@ -225,7 +237,9 @@ export function useDeploy(projectId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api<Deployment>(`/projects/${projectId}/deploy`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] })
+    },
   })
 }
 
@@ -252,7 +266,9 @@ export function useUpdateProject(id: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: UpdateProjectInput) => api<Project>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] })
+    },
   })
 }
 
@@ -277,7 +293,9 @@ export function useRestart(projectId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api<Deployment>(`/projects/${projectId}/restart`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] })
+    },
   })
 }
 
@@ -286,6 +304,60 @@ export function useRedeploy() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (deploymentId: string) => api<Deployment>(`/deployments/${deploymentId}/redeploy`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+}
+
+export function useDomains(projectId: string) {
+  return useQuery({
+    queryKey: ['projects', projectId, 'domains'],
+    queryFn: () => api<Domain[]>(`/projects/${projectId}/domains`),
+  })
+}
+
+export function useAddDomain(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { hostname: string; tlsMode: TLSMode }) =>
+      api<Domain>(`/projects/${projectId}/domains`, { method: 'POST', body: JSON.stringify(input) }),
+    // Sin return: no esperar a que se refresque todo (el estado del contenedor va por SSH y tarda).
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+}
+
+export function useRemoveDomain(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (domainId: string) => api<{ warning: string }>(`/domains/${domainId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects', projectId] })
+    },
+  })
+}
+
+export function useCheckDomain() {
+  return useMutation({
+    mutationFn: (domainId: string) => api<DomainCheck>(`/domains/${domainId}/check`, { method: 'POST' }),
+  })
+}
+
+export function useProxyInfo(serverId: string) {
+  return useQuery({
+    queryKey: ['servers', serverId, 'proxy'],
+    queryFn: () => api<ProxyInfo>(`/servers/${serverId}/proxy`),
+    enabled: !!serverId,
+  })
+}
+
+export function useSetProxyPorts(serverId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ports: { httpPort: number; httpsPort: number }) =>
+      api<ProxyInfo>(`/servers/${serverId}/proxy`, { method: 'PUT', body: JSON.stringify(ports) }),
+    onSuccess: (info) => qc.setQueryData(['servers', serverId, 'proxy'], info),
   })
 }

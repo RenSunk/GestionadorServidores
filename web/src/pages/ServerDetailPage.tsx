@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { CopyButton } from '../components/CopyButton.tsx'
 import { Meter } from '../components/Meter.tsx'
+import { ProxyCard } from '../components/ProxyCard.tsx'
 import { StatusBadge } from '../components/StatusBadge.tsx'
 import { UsageChart } from '../components/UsageChart.tsx'
 import { formatBytes, formatRelative, formatUptime } from '../lib/format.ts'
@@ -87,6 +88,8 @@ export function ServerDetailPage() {
           <Info label="Llave del host" value={<span className="font-mono text-xs">{s.hostKeyFingerprint || '—'}</span>} />
         </dl>
       </section>
+
+      {s.system.dockerStatus === 'running' && <ProxyCard serverId={s.id} />}
     </div>
   )
 }

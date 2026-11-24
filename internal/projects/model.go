@@ -33,6 +33,7 @@ type Project struct {
 	// Último cambio de configuración que requiere reconstruir la imagen / recrear el contenedor.
 	BuildConfigUpdatedAt   *time.Time
 	RuntimeConfigUpdatedAt *time.Time
+	LiveDeploymentID       string // deploy cuyo contenedor recibe el tráfico ("" = anterior a la fase 4)
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 

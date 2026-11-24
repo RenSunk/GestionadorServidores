@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"gestionador/internal/proxy"
 	q "gestionador/internal/sshx" // q.Quote escapa argumentos de shell
 )
 
@@ -48,10 +49,15 @@ fi`, name, prev)
 // `export K='v'` y se cargan en el entorno del cliente docker; en la línea de comandos
 // solo van los nombres (`-e K`), así no se ven en `ps`. No se usan archivos: con Docker
 // instalado como snap, /tmp es privado y docker no vería un archivo temporal.
-func runCmd(p Project, deploymentID, image string, envKeys []string) string {
+// Todo contenedor entra a la red del proxy con el alias d-<deploy>, así Caddy puede
+// apuntar a una versión concreta aunque el contenedor se renombre o reinicie.
+func runCmd(p Project, name, deploymentID, image string, envKeys []string) string {
 	args := []string{
+		fmt.Sprintf("docker network inspect %[1]s >/dev/null 2>&1 || docker network create %[1]s >/dev/null;", proxy.Network),
 		". /dev/stdin && docker run -d",
-		"--name " + p.containerName(),
+		"--name " + name,
+		"--network " + proxy.Network,
+		"--network-alias " + upstreamAlias(deploymentID),
 		"--restart unless-stopped",
 		"--label gestionador.project=" + q.Quote(p.ID),
 		"--label gestionador.deployment=" + q.Quote(deploymentID),
@@ -79,9 +85,27 @@ func inspectCmd(p Project) string {
 	return fmt.Sprintf("docker inspect -f '{{.State.Status}} {{.RestartCount}} {{.State.ExitCode}}' %s", p.containerName())
 }
 
-func failedLogsCmd(p Project) string {
+func failedLogsCmd(name string) string {
 	// Si docker run falló, el contenedor no existe: no hay logs que mostrar.
-	return fmt.Sprintf("if docker container inspect %[1]s >/dev/null 2>&1; then docker logs --tail 50 %[1]s 2>&1; fi", p.containerName())
+	return fmt.Sprintf("if docker container inspect %[1]s >/dev/null 2>&1; then docker logs --tail 50 %[1]s 2>&1; fi", name)
+}
+
+// rmAll borra contenedores de a uno: con varios nombres, `podman rm -f` no borra
+// ninguno si alguno no existe (y aun así sale con 0).
+func rmAll(names ...string) string {
+	var b strings.Builder
+	for _, n := range names {
+		fmt.Fprintf(&b, "docker rm -f %s >/dev/null 2>&1 || true\n", n)
+	}
+	return b.String()
+}
+
+// swapCmd: el tráfico ya va al contenedor -next; se apaga el anterior y -next toma el nombre.
+func swapCmd(p Project) string {
+	name := p.containerName()
+	return fmt.Sprintf(`docker stop -t 20 %[1]s >/dev/null 2>&1
+`+rmAll("%[1]s", "%[1]s-prev")+`
+docker rename %[1]s-next %[1]s && echo "Contenedor anterior detenido"`, name)
 }
 
 // rollbackCmd elimina el contenedor nuevo y restaura el anterior si existía.
@@ -102,9 +126,9 @@ docker image ls %s --format '{{.ID}}' | awk '!seen[$0]++' | tail -n +%d | xargs 
 
 // removeAllCmd elimina contenedores e imágenes del proyecto (al borrarlo).
 func removeAllCmd(p Project) string {
-	return fmt.Sprintf(`docker rm -f %s %s >/dev/null 2>&1 || true
+	return fmt.Sprintf(rmAll("%s", "%s", "%s-next")+`
 docker image ls -q %s | xargs -r docker rmi -f >/dev/null 2>&1 || true`,
-		p.containerName(), p.containerName()+"-prev", p.imageRepo())
+		p.containerName(), p.containerName()+"-prev", p.containerName(), p.imageRepo())
 }
 
 func logsCmd(p Project, tail int) string {

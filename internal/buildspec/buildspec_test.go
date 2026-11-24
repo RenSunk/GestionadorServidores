@@ -133,7 +133,7 @@ func TestDockerfile(t *testing.T) {
 	}
 	got := Dockerfile(s)
 	for _, want := range []string{
-		"FROM node:22-slim\n",
+		"FROM docker.io/library/node:22-slim\n",
 		"RUN corepack enable",
 		"COPY . .\nRUN npm ci && npm run build\n",
 		"ENV NODE_ENV=production\n",
@@ -153,7 +153,7 @@ func TestDockerfile(t *testing.T) {
 	if err := custom.Normalize(); err != nil {
 		t.Fatal(err)
 	}
-	if got := Dockerfile(custom); !strings.Contains(got, "FROM ruby:3.3-slim\n") || !strings.Contains(got, `"exec ruby app.rb -p \"$PORT\""`) {
+	if got := Dockerfile(custom); !strings.Contains(got, "FROM docker.io/library/ruby:3.3-slim\n") || !strings.Contains(got, `"exec ruby app.rb -p \"$PORT\""`) {
 		t.Errorf("custom:\n%s", got)
 	}
 }
@@ -180,5 +180,20 @@ func TestDockerfileBuildArgs(t *testing.T) {
 	got := Dockerfile(s, "NEXT_PUBLIC_API_URL")
 	if !strings.Contains(got, "COPY . .\nARG NEXT_PUBLIC_API_URL\nRUN npm run build\n") {
 		t.Errorf("ARG debe ir antes del build:\n%s", got)
+	}
+}
+
+func TestQualifyImage(t *testing.T) {
+	for in, want := range map[string]string{
+		"ruby:3.3-slim":                    "docker.io/library/ruby:3.3-slim",
+		"bitnami/php-fpm:8.3":              "docker.io/bitnami/php-fpm:8.3",
+		"ghcr.io/org/app:1":                "ghcr.io/org/app:1",
+		"mcr.microsoft.com/dotnet/sdk:8.0": "mcr.microsoft.com/dotnet/sdk:8.0",
+		"localhost:5000/app":               "localhost:5000/app",
+		"docker.io/library/node:22":        "docker.io/library/node:22",
+	} {
+		if got := QualifyImage(in); got != want {
+			t.Errorf("%s → %s (want %s)", in, got, want)
+		}
 	}
 }

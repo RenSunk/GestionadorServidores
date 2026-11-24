@@ -23,7 +23,7 @@ func NewStore(db *database.DB) *Store {
 const projectColumns = `p.id, p.name, p.slug, p.server_id, p.repo_url, p.branch, p.git_username, p.git_token_enc,
 	p.root_dir, p.dockerfile, p.container_port, p.host_port, p.build_type, p.runtime, p.runtime_version,
 	p.base_image, p.build_command, p.start_command, p.env_enc, p.cpu_limit_milli, p.memory_limit_mb,
-	p.build_config_updated_at, p.runtime_config_updated_at, p.created_at, p.updated_at, s.name, s.host`
+	p.build_config_updated_at, p.runtime_config_updated_at, COALESCE(p.live_deployment_id, ''), p.created_at, p.updated_at, s.name, s.host`
 
 const projectFrom = ` FROM projects p JOIN servers s ON s.id = p.server_id`
 
@@ -38,7 +38,7 @@ func scanProject(row scanner) (Project, error) {
 	err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.ServerID, &p.RepoURL, &p.Branch, &p.GitUsername, &p.GitTokenEnc,
 		&p.RootDir, &p.Dockerfile, &p.ContainerPort, &hostPort, &p.BuildType, &p.Build.Runtime, &p.Build.Version,
 		&p.Build.BaseImage, &p.Build.BuildCommand, &p.Build.StartCommand, &p.EnvEnc, &cpu, &mem,
-		&buildAt, &runtimeAt, &p.CreatedAt, &p.UpdatedAt, &p.ServerName, &p.ServerHost)
+		&buildAt, &runtimeAt, &p.LiveDeploymentID, &p.CreatedAt, &p.UpdatedAt, &p.ServerName, &p.ServerHost)
 	p.Build.Port = p.ContainerPort
 	p.HostPort, p.CPULimitMilli, p.MemoryLimitMB = nullInt(hostPort), nullInt(cpu), nullInt(mem)
 	p.BuildConfigUpdatedAt, p.RuntimeConfigUpdatedAt = nullTime(buildAt), nullTime(runtimeAt)

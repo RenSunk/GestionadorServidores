@@ -12,6 +12,7 @@ import (
 
 	"gestionador/internal/buildspec"
 	"gestionador/internal/httpx"
+	"gestionador/internal/proxy"
 )
 
 const ssePingInterval = 20 * time.Second
@@ -41,6 +42,13 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{id}/status", h.status)
 	mux.HandleFunc("GET /api/projects/{id}/logs", h.containerLogs)
 	mux.HandleFunc("GET /api/projects/{id}/dockerfile", h.projectDockerfile)
+
+	mux.HandleFunc("GET /api/projects/{id}/domains", h.listDomains)
+	mux.HandleFunc("POST /api/projects/{id}/domains", h.addDomain)
+	mux.HandleFunc("DELETE /api/domains/{id}", h.removeDomain)
+	mux.HandleFunc("POST /api/domains/{id}/check", h.checkDomain)
+	mux.HandleFunc("GET /api/servers/{id}/proxy", h.getProxy)
+	mux.HandleFunc("PUT /api/servers/{id}/proxy", h.setProxy)
 
 	mux.HandleFunc("GET /api/deployments/{id}", h.getDeployment)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", h.cancelDeployment)
@@ -74,6 +82,7 @@ type projectView struct {
 	CPULimit           *float64    `json:"cpuLimit"`
 	MemoryLimitMB      *int        `json:"memoryLimitMb"`
 	URL                string      `json:"url"`
+	Domains            []string    `json:"domains"`
 	ContainerName      string      `json:"containerName"`
 	CreatedAt          time.Time   `json:"createdAt"`
 	LastDeployment     *Deployment `json:"lastDeployment"`
@@ -90,6 +99,23 @@ type deploymentDetailView struct {
 	Deployment
 	Log  string `json:"log"`
 	Live bool   `json:"live"`
+}
+
+// withDomains completa los dominios y usa el primero como URL principal.
+func (h *Handler) withDomains(ctx context.Context, v projectView, serverID string) projectView {
+	v.Domains = []string{}
+	ds, err := h.svc.store.ListDomains(ctx, v.ID)
+	if err != nil || len(ds) == 0 {
+		return v
+	}
+	for _, d := range ds {
+		v.Domains = append(v.Domains, d.Hostname)
+	}
+	v.URL = "https://" + ds[0].Hostname
+	if ports, err := h.svc.store.ProxyPorts(ctx, serverID); err == nil && ports.HTTPS != 443 {
+		v.URL += ":" + strconv.Itoa(ports.HTTPS)
+	}
+	return v
 }
 
 func (h *Handler) view(p Project, last *Deployment) projectView {
@@ -196,7 +222,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		if d, ok := latest[p.ID]; ok {
 			last = &d
 		}
-		out[i] = h.view(p, last)
+		out[i] = h.withDomains(r.Context(), h.view(p, last), p.ServerID)
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
@@ -238,7 +264,8 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, projectDetailView{projectView: h.view(p, last), Deployments: deps, Pending: pending})
+	v := h.withDomains(r.Context(), h.view(p, last), p.ServerID)
+	httpx.WriteJSON(w, http.StatusOK, projectDetailView{projectView: v, Deployments: deps, Pending: pending})
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +305,75 @@ func (h *Handler) setEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string][]EnvVar{"vars": vars})
+}
+
+// ---------- Dominios ----------
+
+func (h *Handler) listDomains(w http.ResponseWriter, r *http.Request) {
+	ds, err := h.svc.Domains(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, ds)
+}
+
+func (h *Handler) addDomain(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Hostname string        `json:"hostname"`
+		TLSMode  proxy.TLSMode `json:"tlsMode"`
+	}
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	d, err := h.svc.AddDomain(r.Context(), r.PathValue("id"), in.Hostname, in.TLSMode)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, d)
+}
+
+func (h *Handler) removeDomain(w http.ResponseWriter, r *http.Request) {
+	warning, err := h.svc.RemoveDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"warning": warning})
+}
+
+func (h *Handler) checkDomain(w http.ResponseWriter, r *http.Request) {
+	c, err := h.svc.CheckDomain(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+func (h *Handler) getProxy(w http.ResponseWriter, r *http.Request) {
+	info, err := h.svc.ProxyInfo(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, info)
+}
+
+func (h *Handler) setProxy(w http.ResponseWriter, r *http.Request) {
+	var in proxy.Ports
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	info, err := h.svc.SetProxyPorts(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, info)
 }
 
 func (h *Handler) restart(w http.ResponseWriter, r *http.Request) {
@@ -471,17 +567,18 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		validation *ValidationError
 		repoErr    *RepoError
 		portErr    *PortInUseError
+		proxyErr   *ProxyError
 	)
 	switch {
 	case errors.As(err, &validation):
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
-	case errors.As(err, &repoErr):
+	case errors.As(err, &repoErr), errors.As(err, &proxyErr):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, ErrNotFound), errors.Is(err, ErrDeploymentNotFound):
+	case errors.Is(err, ErrNotFound), errors.Is(err, ErrDeploymentNotFound), errors.Is(err, ErrDomainNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 	case errors.As(err, &portErr), errors.Is(err, ErrDuplicateName),
 		errors.Is(err, ErrDeployInProgress), errors.Is(err, ErrNotRunning), errors.Is(err, ErrTooLateToCancel),
-		errors.Is(err, ErrNothingToRestore):
+		errors.Is(err, ErrNothingToRestore), errors.Is(err, ErrDuplicateDomain):
 		httpx.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		slog.Error("projects: error interno", "err", err)

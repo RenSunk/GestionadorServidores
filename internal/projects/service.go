@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"gestionador/internal/buildspec"
 	"gestionador/internal/gitx"
+	"gestionador/internal/proxy"
 	"gestionador/internal/secrets"
 	"gestionador/internal/servers"
 	"gestionador/internal/sshx"
@@ -41,6 +43,7 @@ type Service struct {
 	store    *Store
 	servers  Servers
 	box      *secrets.Box
+	proxy    *proxy.Manager
 	buildDir string
 
 	rootCtx context.Context // se cancela al apagar la instancia
@@ -57,7 +60,7 @@ type activeDeploy struct {
 	publishing   bool // protegido por Service.mu; a partir de aquí no se puede cancelar
 }
 
-func NewService(ctx context.Context, store *Store, srv Servers, box *secrets.Box, dataDir string) (*Service, error) {
+func NewService(ctx context.Context, store *Store, srv Servers, box *secrets.Box, px *proxy.Manager, dataDir string) (*Service, error) {
 	if n, err := store.FailInterrupted(ctx, time.Now().UTC()); err != nil {
 		return nil, err
 	} else if n > 0 {
@@ -75,6 +78,7 @@ func NewService(ctx context.Context, store *Store, srv Servers, box *secrets.Box
 		store:    store,
 		servers:  srv,
 		box:      box,
+		proxy:    px,
 		buildDir: buildDir,
 		rootCtx:  ctx,
 		running:  make(map[string]*activeDeploy),
@@ -311,8 +315,14 @@ func (s *Service) Delete(ctx context.Context, id string) (warning string, err er
 		slog.Warn("borrar proyecto: limpieza en servidor falló", "project", p.Name, "err", err)
 	}
 
+	hadDomains, _ := s.store.CountDomains(ctx, id)
 	if err := s.store.DeleteProject(ctx, id); err != nil {
 		return "", err
+	}
+	if hadDomains > 0 {
+		if err := s.syncProxy(cleanCtx, p.ServerID); err != nil {
+			warning = strings.TrimSpace(warning + " No se pudo quitar el dominio de Caddy: " + err.Error())
+		}
 	}
 	slog.Info("proyecto eliminado", "id", id, "name", p.Name)
 	return warning, nil
@@ -655,6 +665,10 @@ func (s *Service) build(ctx, db context.Context, p Project, d *Deployment, srv s
 		return err
 	}
 	if code != 0 {
+		if strings.Contains(log.String(), "short-name") && strings.Contains(log.String(), "did not resolve") {
+			return errors.New("el servidor usa Podman y no acepta nombres cortos de imagen en el Dockerfile (ej. FROM node:20). " +
+				"Usa el nombre completo (FROM docker.io/library/node:20) o agrega unqualified-search-registries = [\"docker.io\"] en /etc/containers/registries.conf del servidor")
+		}
 		if networkFailure(log.String()) {
 			return errors.New("el build falló al descargar dependencias por un problema de red en el servidor; " +
 				"suele ser temporal, vuelve a desplegar. Si se repite, revisa la conexión a internet o el DNS del servidor")
@@ -667,33 +681,128 @@ func (s *Service) build(ctx, db context.Context, p Project, d *Deployment, srv s
 // publish reemplaza el contenedor y vuelve al anterior si algo falla.
 // Recibe un contexto que no se cancela por el usuario (solo por timeout).
 func (s *Service) publish(ctx context.Context, p Project, d *Deployment, env []EnvVar, log *LogBuffer) error {
+	domains, err := s.store.ListDomains(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	// Sin corte solo si no hay puerto publicado: dos contenedores no pueden usar el mismo puerto del servidor.
+	if len(domains) > 0 && p.HostPort == nil {
+		err = s.publishSwap(ctx, p, d, env, log)
+	} else {
+		err = s.publishReplace(ctx, p, d, env, log, len(domains) > 0)
+	}
+	if err != nil {
+		return err
+	}
+
+	suffix := ""
+	if len(domains) > 0 {
+		if ports, err := s.store.ProxyPorts(ctx, p.ServerID); err == nil && ports.HTTPS != 443 {
+			suffix = ":" + strconv.Itoa(ports.HTTPS)
+		}
+	}
+	for _, dm := range domains {
+		fmt.Fprintf(log, "Disponible en https://%s%s\n", dm.Hostname, suffix)
+	}
+	if p.HostPort != nil {
+		fmt.Fprintf(log, "Disponible en http://%s:%d\n", hostOnly(p.ServerHost), *p.HostPort)
+	}
+	log.Step("Limpiando imágenes antiguas (se conservan %d)", keepImages)
+	return s.runStep(ctx, p, cleanupCmd(p), log, "no se pudieron limpiar las imágenes antiguas")
+}
+
+// publishReplace detiene el contenedor actual y arranca el nuevo (hay un corte breve).
+// Si el nuevo no arranca, restaura el anterior.
+func (s *Service) publishReplace(ctx context.Context, p Project, d *Deployment, env []EnvVar, log *LogBuffer, hasDomains bool) error {
 	log.Step("Publicando contenedor %s", p.containerName())
 	fmt.Fprintln(log, describeRuntime(p, env))
+	if hasDomains {
+		fmt.Fprintln(log, "Hay un corte breve porque el proyecto publica un puerto; quítalo para desplegar sin corte (el tráfico ya entra por el dominio).")
+	}
 
 	err := s.runStep(ctx, p, stopPreviousCmd(p), log, "no se pudo detener el contenedor anterior")
 	if err == nil {
-		err = s.runStepInput(ctx, p, runCmd(p, d.ID, d.Image, envKeys(env)), envScript(env), log, "no se pudo iniciar el contenedor; revisa el error de Docker en el log")
+		err = s.runStepInput(ctx, p, runCmd(p, p.containerName(), d.ID, d.Image, envKeys(env)), envScript(env), log, "no se pudo iniciar el contenedor; revisa el error de Docker en el log")
 	}
 	if err == nil {
 		fmt.Fprintf(log, "Esperando %s para verificar que el contenedor siga en ejecución...\n", healthWait)
 		time.Sleep(healthWait)
 		err = s.checkHealthy(ctx, p, log)
 	}
-
 	if err != nil {
 		log.Step("El contenedor nuevo no arrancó; revirtiendo")
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
 		defer cancel()
-		_, _ = s.servers.Exec(rbCtx, p.ServerID, failedLogsCmd(p), sshx.ExecOptions{Stdout: log, Stderr: log})
+		_, _ = s.servers.Exec(rbCtx, p.ServerID, failedLogsCmd(p.containerName()), sshx.ExecOptions{Stdout: log, Stderr: log})
 		_ = s.runStep(rbCtx, p, rollbackCmd(p), log, "no se pudo restaurar la versión anterior")
 		return err
 	}
 
-	if p.HostPort != nil {
-		fmt.Fprintf(log, "Disponible en http://%s:%d\n", hostOnly(p.ServerHost), *p.HostPort)
+	if err := s.store.SetLiveDeployment(ctx, p.ID, d.ID); err != nil {
+		return err
 	}
-	log.Step("Limpiando imágenes antiguas (se conservan %d)", keepImages)
-	return s.runStep(ctx, p, cleanupCmd(p), log, "no se pudieron limpiar las imágenes antiguas")
+	if hasDomains {
+		log.Step("Actualizando Caddy")
+		if err := s.syncProxy(ctx, p.ServerID); err != nil {
+			// El contenedor ya corre; lo que falla es enrutar el dominio hacia él.
+			return fmt.Errorf("el contenedor está en ejecución, pero no se pudo actualizar Caddy: %w", err)
+		}
+	}
+	return nil
+}
+
+// publishSwap arranca el contenedor nuevo junto al actual, espera a que responda,
+// cambia el tráfico en Caddy y recién entonces apaga el anterior: sin corte.
+func (s *Service) publishSwap(ctx context.Context, p Project, d *Deployment, env []EnvVar, log *LogBuffer) error {
+	next := p.containerName() + "-next"
+	log.Step("Publicando sin corte: la versión actual sigue atendiendo hasta que la nueva responda")
+	fmt.Fprintln(log, describeRuntime(p, env))
+
+	ports, err := s.store.ProxyPorts(ctx, p.ServerID)
+	if err != nil {
+		return err
+	}
+	if err := s.proxy.Ensure(ctx, p.ServerID, ports); err != nil {
+		return err
+	}
+
+	fail := func(err error) error {
+		log.Step("La versión nueva no está lista; se mantiene la actual")
+		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
+		defer cancel()
+		_, _ = s.servers.Exec(rbCtx, p.ServerID, failedLogsCmd(next), sshx.ExecOptions{Stdout: log, Stderr: log})
+		_, _ = s.servers.Run(rbCtx, p.ServerID, "docker rm -f "+next)
+		return err
+	}
+
+	// Restos de un intento anterior. Si un cambio quedó a medias, el que atiende puede
+	// llamarse -next: en ese caso se le devuelve el nombre en vez de borrarlo.
+	_, _ = s.servers.Run(ctx, p.ServerID, fmt.Sprintf(`if ! docker container inspect %[1]s >/dev/null 2>&1 && docker container inspect %[2]s >/dev/null 2>&1; then
+  docker rename %[2]s %[1]s
+else
+  docker rm -f %[2]s >/dev/null 2>&1
+fi`, p.containerName(), next))
+	if err := s.runStepInput(ctx, p, runCmd(p, next, d.ID, d.Image, envKeys(env)), envScript(env), log,
+		"no se pudo iniciar el contenedor; revisa el error de Docker en el log"); err != nil {
+		return fail(err)
+	}
+	if err := s.proxy.WaitReady(ctx, p.ServerID, next, upstreamAlias(d.ID), p.ContainerPort, log); err != nil {
+		return fail(err)
+	}
+
+	log.Step("Cambiando el tráfico a la versión nueva")
+	prevLive := p.LiveDeploymentID
+	if err := s.store.SetLiveDeployment(ctx, p.ID, d.ID); err != nil {
+		return fail(err)
+	}
+	if err := s.syncProxy(ctx, p.ServerID); err != nil {
+		db := context.WithoutCancel(ctx)
+		_ = s.store.SetLiveDeployment(db, p.ID, prevLive)
+		_ = s.syncProxy(db, p.ServerID)
+		return fail(fmt.Errorf("no se pudo actualizar Caddy: %w", err))
+	}
+	// A partir de aquí el tráfico ya va al contenedor nuevo; apagar el viejo no puede romper nada.
+	return s.runStep(ctx, p, swapCmd(p), log, "no se pudo retirar el contenedor anterior")
 }
 
 func (s *Service) checkHealthy(ctx context.Context, p Project, log *LogBuffer) error {

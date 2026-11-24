@@ -137,8 +137,8 @@ func TestNormalizeEnv(t *testing.T) {
 func TestRunCmdKeepsSecretsOffCommandLine(t *testing.T) {
 	cpu, mem, hp := 1500, 512, 8080
 	p := Project{ID: "p1", Slug: "api", ContainerPort: 3000, HostPort: &hp, CPULimitMilli: &cpu, MemoryLimitMB: &mem}
-	cmd := runCmd(p, "d1", "gestionador/api:d1", []string{"DB_PASS"})
-	for _, want := range []string{". /dev/stdin && docker run -d", "-e DB_PASS ", "-e PORT=3000", "-p 8080:3000", "--cpus 1.500", "--memory 512m --memory-swap 512m"} {
+	cmd := runCmd(p, "gs-api", "d1", "gestionador/api:d1", []string{"DB_PASS"})
+	for _, want := range []string{". /dev/stdin && docker run -d", "-e DB_PASS ", "-e PORT=3000", "-p 8080:3000", "--cpus 1.500", "--memory 512m --memory-swap 512m", "--network gestionador", "--network-alias d-d1", "--name gs-api "} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("falta %q en %s", want, cmd)
 		}
@@ -184,5 +184,24 @@ func TestLimits(t *testing.T) {
 	tiny := 8
 	if _, _, err := (UpdateInput{MemoryLimitMB: &tiny}).limits(); err == nil {
 		t.Error("8 MB debería rechazarse")
+	}
+}
+
+func TestNormalizeHostname(t *testing.T) {
+	ok := map[string]string{
+		"App.Example.com":          "app.example.com",
+		"https://app.example.com/": "app.example.com",
+		"mi-app.local.test.":       "mi-app.local.test",
+		"xn--espaa-rta.com":        "xn--espaa-rta.com",
+	}
+	for in, want := range ok {
+		if got, err := normalizeHostname(in); err != nil || got != want {
+			t.Errorf("%q → %q, %v (want %q)", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "localhost", "*.example.com", "example.com/path", "example.com:8080", "1.2.3.4", "-a.com", "a..com", "a b.com", "exa_mple.com"} {
+		if _, err := normalizeHostname(bad); err == nil {
+			t.Errorf("esperaba error para %q", bad)
+		}
 	}
 }
