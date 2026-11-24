@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"gestionador/internal/buildspec"
 	"gestionador/internal/gitx"
 )
 
@@ -24,6 +25,8 @@ type Project struct {
 	Dockerfile    string
 	ContainerPort int
 	HostPort      *int
+	BuildType     BuildType
+	Build         buildspec.Spec // solo si BuildType == BuildRuntime (Port = ContainerPort)
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 
@@ -31,6 +34,17 @@ type Project struct {
 	ServerName string
 	ServerHost string
 }
+
+type BuildType string
+
+const (
+	BuildDockerfile BuildType = "dockerfile" // Dockerfile del repositorio
+	BuildRuntime    BuildType = "runtime"    // Dockerfile generado (lenguaje + comandos)
+)
+
+// generatedDockerfile es el nombre con el que se escribe el Dockerfile generado
+// dentro del contexto de build (no choca con uno existente en el repo).
+const generatedDockerfile = ".gestionador.Dockerfile"
 
 func (p Project) containerName() string { return "gs-" + p.Slug }
 func (p Project) imageRepo() string     { return "gestionador/" + p.Slug }
@@ -72,6 +86,21 @@ type CreateInput struct {
 	Dockerfile    string `json:"dockerfile"`
 	ContainerPort int    `json:"containerPort"`
 	HostPort      *int   `json:"hostPort"`
+
+	BuildType      BuildType `json:"buildType"`
+	Runtime        string    `json:"runtime"`
+	RuntimeVersion string    `json:"runtimeVersion"`
+	BaseImage      string    `json:"baseImage"`
+	BuildCommand   string    `json:"buildCommand"`
+	StartCommand   string    `json:"startCommand"`
+}
+
+// spec arma la configuración de build generada a partir del input.
+func (in CreateInput) spec() buildspec.Spec {
+	return buildspec.Spec{
+		Runtime: in.Runtime, Version: in.RuntimeVersion, BaseImage: in.BaseImage,
+		BuildCommand: in.BuildCommand, StartCommand: in.StartCommand, Port: in.ContainerPort,
+	}
 }
 
 // ValidationError se devuelve al cliente como 400.
@@ -142,6 +171,20 @@ func (in *CreateInput) normalize() error {
 	}
 	if in.Dockerfile, err = gitx.CleanSubPath(in.Dockerfile); err != nil || in.Dockerfile == "" {
 		return invalid("ruta del Dockerfile inválida")
+	}
+
+	switch in.BuildType {
+	case "", BuildDockerfile:
+		in.BuildType = BuildDockerfile
+		in.Runtime, in.RuntimeVersion, in.BaseImage, in.BuildCommand, in.StartCommand = "", "", "", "", ""
+	case BuildRuntime:
+		spec := in.spec()
+		if err := spec.Normalize(); err != nil {
+			return invalid("%s", err.Error())
+		}
+		in.RuntimeVersion, in.BaseImage, in.BuildCommand, in.StartCommand = spec.Version, spec.BaseImage, spec.BuildCommand, spec.StartCommand
+	default:
+		return invalid("tipo de build inválido")
 	}
 	return nil
 }

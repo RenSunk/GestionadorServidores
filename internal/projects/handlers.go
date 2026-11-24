@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"gestionador/internal/buildspec"
 	"gestionador/internal/httpx"
 )
 
@@ -24,6 +25,10 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/runtimes", h.runtimes)
+	mux.HandleFunc("POST /api/projects/detect", h.detect)
+	mux.HandleFunc("POST /api/dockerfile-preview", h.dockerfilePreview)
+
 	mux.HandleFunc("GET /api/projects", h.list)
 	mux.HandleFunc("POST /api/projects", h.create)
 	mux.HandleFunc("GET /api/projects/{id}", h.get)
@@ -31,6 +36,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{id}/deploy", h.deploy)
 	mux.HandleFunc("GET /api/projects/{id}/status", h.status)
 	mux.HandleFunc("GET /api/projects/{id}/logs", h.containerLogs)
+	mux.HandleFunc("GET /api/projects/{id}/dockerfile", h.projectDockerfile)
 
 	mux.HandleFunc("GET /api/deployments/{id}", h.getDeployment)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", h.cancelDeployment)
@@ -53,6 +59,13 @@ type projectView struct {
 	Dockerfile         string      `json:"dockerfile"`
 	ContainerPort      int         `json:"containerPort"`
 	HostPort           *int        `json:"hostPort"`
+	BuildType          BuildType   `json:"buildType"`
+	Runtime            string      `json:"runtime"`
+	RuntimeVersion     string      `json:"runtimeVersion"`
+	RuntimeLabel       string      `json:"runtimeLabel"`
+	BaseImage          string      `json:"baseImage"`
+	BuildCommand       string      `json:"buildCommand"`
+	StartCommand       string      `json:"startCommand"`
 	URL                string      `json:"url"`
 	ContainerName      string      `json:"containerName"`
 	CreatedAt          time.Time   `json:"createdAt"`
@@ -78,11 +91,68 @@ func (h *Handler) view(p Project, last *Deployment) projectView {
 		RootDir: p.RootDir, Dockerfile: p.Dockerfile, ContainerPort: p.ContainerPort, HostPort: p.HostPort,
 		ContainerName: p.containerName(), CreatedAt: p.CreatedAt, LastDeployment: last,
 		ActiveDeploymentID: h.svc.ActiveDeploymentID(p.ID),
+		BuildType:          p.BuildType,
+	}
+	if p.BuildType == BuildRuntime {
+		v.Runtime, v.RuntimeVersion, v.BaseImage = p.Build.Runtime, p.Build.Version, p.Build.BaseImage
+		v.BuildCommand, v.StartCommand, v.RuntimeLabel = p.Build.BuildCommand, p.Build.StartCommand, p.Build.Label()
 	}
 	if p.HostPort != nil {
 		v.URL = fmt.Sprintf("http://%s:%d", hostOnly(p.ServerHost), *p.HostPort)
 	}
 	return v
+}
+
+// ---------- Configuración de build ----------
+
+func (h *Handler) runtimes(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, buildspec.Catalog())
+}
+
+func (h *Handler) detect(w http.ResponseWriter, r *http.Request) {
+	var in DetectInput
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	d, err := h.svc.Detect(r.Context(), in)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, d)
+}
+
+// dockerfilePreview genera el Dockerfile sin guardar nada (vista previa del formulario).
+func (h *Handler) dockerfilePreview(w http.ResponseWriter, r *http.Request) {
+	var spec buildspec.Spec
+	if err := httpx.DecodeJSON(w, r, &spec); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := spec.Normalize(); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"dockerfile": buildspec.Dockerfile(spec)})
+}
+
+func (h *Handler) projectDockerfile(w http.ResponseWriter, r *http.Request) {
+	p, err := h.svc.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	if p.BuildType != BuildRuntime {
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"dockerfile": ""})
+		return
+	}
+	spec := p.Build
+	if err := spec.Normalize(); err != nil {
+		httpx.WriteError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"dockerfile": buildspec.Dockerfile(spec)})
 }
 
 // ---------- Proyectos ----------

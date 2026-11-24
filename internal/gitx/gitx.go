@@ -89,6 +89,10 @@ func Clone(ctx context.Context, r Repo, dir string) (Commit, error) {
 		Tags:          git.NoTags,
 	})
 	if err != nil {
+		var noRef git.NoMatchingRefSpecError
+		if errors.Is(err, plumbing.ErrReferenceNotFound) || errors.As(err, &noRef) {
+			return Commit{}, fmt.Errorf("la rama %q no existe en el repositorio", r.Branch)
+		}
 		return Commit{}, friendly(err, r.Token != "")
 	}
 	head, err := repo.Head()

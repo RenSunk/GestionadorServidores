@@ -14,10 +14,10 @@ import (
 
 const keepImages = 3 // imágenes por proyecto que se conservan (para rollback en la fase 3)
 
-// buildCmd lee el contexto (tar) por stdin.
-func buildCmd(p Project, image string) string {
+// buildCmd lee el contexto (tar) por stdin. dockerfile es relativo al contexto.
+func buildCmd(p Project, image, dockerfile string) string {
 	return fmt.Sprintf("BUILDKIT_PROGRESS=plain docker build --label gestionador.project=%s -t %s -f %s -",
-		q.Quote(p.ID), q.Quote(image), q.Quote(p.Dockerfile))
+		q.Quote(p.ID), q.Quote(image), q.Quote(dockerfile))
 }
 
 // stopPreviousCmd detiene el contenedor actual y lo renombra a gs-<slug>-prev

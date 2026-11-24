@@ -51,6 +51,7 @@ internal/
   httpx/                Helpers HTTP compartidos (JSON, errores)
   secrets/              Cifrado AES-256-GCM de datos sensibles
   server/               Router HTTP, health y middlewares
+  buildspec/            Lenguajes soportados, detección por archivos y Dockerfile generado
   gitx/                 Clonado con go-git y empaquetado del contexto (.dockerignore)
   projects/             Módulo de proyectos: deploys, rollback, logs en vivo (SSE)
   servers/              Módulo de servidores: CRUD, sondeo SSH y monitor
@@ -79,6 +80,20 @@ Flujo de un deploy:
 2. **Build**: el contexto (sin `.git` y respetando `.dockerignore`) viaja como tar por SSH a `docker build -` en el servidor. El servidor no necesita git.
 3. **Publicar**: detiene el contenedor `gs-<proyecto>`, arranca el nuevo y verifica que siga vivo a los 5 s. Si falla, **restaura el anterior**. Esta fase no se puede cancelar para no dejar la app caída.
 4. **Limpiar**: conserva las últimas 3 imágenes del proyecto.
+
+### Proyectos sin Dockerfile
+
+Al crear un proyecto se analiza el repo. Si trae Dockerfile, se ofrece usarlo; si no, se preselecciona el lenguaje detectado con sus comandos sugeridos (al estilo de Render) y Gestionador genera el Dockerfile en cada deploy:
+
+| Lenguaje | Se detecta por | Ejemplos de framework |
+|---|---|---|
+| Node.js (20/22/24) | `package.json` (+ npm/pnpm/yarn por lockfile) | Next.js, NestJS, Nuxt, Express, Fastify, Vite estático |
+| Python (3.11–3.13) | `requirements.txt`, `pyproject.toml`, `Pipfile`, `manage.py` | Django, FastAPI, Flask |
+| Java Maven / Gradle (17/21/25) | `pom.xml`, `build.gradle(.kts)` | Spring Boot |
+| Go | `go.mod` | — |
+| Otro (imagen base) | — | PHP, Ruby, .NET… con cualquier imagen pública |
+
+El usuario puede cambiar lenguaje, versión, comando de build y comando de inicio, y ver el Dockerfile antes de crear el proyecto. La app recibe la variable `PORT` y debe escuchar en `0.0.0.0`.
 
 Los logs del build y del contenedor se ven en vivo (Server-Sent Events). Un solo deploy a la vez por proyecto. Hay un corte breve entre detener el contenedor viejo y arrancar el nuevo; el despliegue sin corte llega con los dominios (fase 4).
 

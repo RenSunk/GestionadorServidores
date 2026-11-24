@@ -21,7 +21,8 @@ func NewStore(db *database.DB) *Store {
 // ---------- Proyectos ----------
 
 const projectColumns = `p.id, p.name, p.slug, p.server_id, p.repo_url, p.branch, p.git_username, p.git_token_enc,
-	p.root_dir, p.dockerfile, p.container_port, p.host_port, p.created_at, p.updated_at, s.name, s.host`
+	p.root_dir, p.dockerfile, p.container_port, p.host_port, p.build_type, p.runtime, p.runtime_version,
+	p.base_image, p.build_command, p.start_command, p.created_at, p.updated_at, s.name, s.host`
 
 const projectFrom = ` FROM projects p JOIN servers s ON s.id = p.server_id`
 
@@ -33,7 +34,9 @@ func scanProject(row scanner) (Project, error) {
 		hostPort sql.NullInt64
 	)
 	err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.ServerID, &p.RepoURL, &p.Branch, &p.GitUsername, &p.GitTokenEnc,
-		&p.RootDir, &p.Dockerfile, &p.ContainerPort, &hostPort, &p.CreatedAt, &p.UpdatedAt, &p.ServerName, &p.ServerHost)
+		&p.RootDir, &p.Dockerfile, &p.ContainerPort, &hostPort, &p.BuildType, &p.Build.Runtime, &p.Build.Version,
+		&p.Build.BaseImage, &p.Build.BuildCommand, &p.Build.StartCommand, &p.CreatedAt, &p.UpdatedAt, &p.ServerName, &p.ServerHost)
+	p.Build.Port = p.ContainerPort
 	if hostPort.Valid {
 		v := int(hostPort.Int64)
 		p.HostPort = &v
@@ -69,10 +72,12 @@ func (st *Store) GetProject(ctx context.Context, id string) (Project, error) {
 func (st *Store) CreateProject(ctx context.Context, p Project) error {
 	_, err := st.db.ExecContext(ctx, `
 		INSERT INTO projects (id, name, slug, server_id, repo_url, branch, git_username, git_token_enc,
-			root_dir, dockerfile, container_port, host_port, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			root_dir, dockerfile, container_port, host_port, build_type, runtime, runtime_version,
+			base_image, build_command, start_command, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 		p.ID, p.Name, p.Slug, p.ServerID, p.RepoURL, p.Branch, p.GitUsername, p.GitTokenEnc,
-		p.RootDir, p.Dockerfile, p.ContainerPort, p.HostPort, p.CreatedAt, p.UpdatedAt)
+		p.RootDir, p.Dockerfile, p.ContainerPort, p.HostPort, p.BuildType, p.Build.Runtime, p.Build.Version,
+		p.Build.BaseImage, p.Build.BuildCommand, p.Build.StartCommand, p.CreatedAt, p.UpdatedAt)
 	if err != nil && isUniqueViolation(err) {
 		if strings.Contains(err.Error(), "host_port") && p.HostPort != nil {
 			return &PortInUseError{Port: *p.HostPort}

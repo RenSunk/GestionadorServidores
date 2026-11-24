@@ -1,6 +1,49 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api.ts'
 
+export type BuildType = 'dockerfile' | 'runtime'
+
+export type Runtime = {
+  id: string
+  label: string
+  versions: string[] | null
+  defaultVersion: string
+  defaultPort: number
+  needsBaseImage: boolean
+  buildPlaceholder: string
+  startPlaceholder: string
+}
+
+export type Detection = {
+  hasDockerfile: boolean
+  runtime: string
+  framework: string
+  version: string
+  packageManager: string
+  buildCommand: string
+  startCommand: string
+  port: number
+  notes: string[]
+}
+
+export type DetectInput = {
+  repoUrl: string
+  branch: string
+  gitUsername?: string
+  gitToken?: string
+  rootDir?: string
+  dockerfile?: string
+}
+
+export type BuildSpec = {
+  runtime: string
+  version: string
+  baseImage: string
+  buildCommand: string
+  startCommand: string
+  port: number
+}
+
 export type DeploymentStatus = 'queued' | 'building' | 'deploying' | 'succeeded' | 'failed' | 'canceled'
 
 export type Deployment = {
@@ -32,6 +75,13 @@ export type Project = {
   dockerfile: string
   containerPort: number
   hostPort: number | null
+  buildType: BuildType
+  runtime: string
+  runtimeVersion: string
+  runtimeLabel: string
+  baseImage: string
+  buildCommand: string
+  startCommand: string
   url: string
   containerName: string
   createdAt: string
@@ -64,6 +114,12 @@ export type CreateProjectInput = {
   dockerfile?: string
   containerPort: number
   hostPort: number | null
+  buildType: BuildType
+  runtime?: string
+  runtimeVersion?: string
+  baseImage?: string
+  buildCommand?: string
+  startCommand?: string
 }
 
 /** "usuario/repo" a partir de la URL del repositorio. */
@@ -73,6 +129,38 @@ export function repoName(url: string) {
 
 export function isActive(status: DeploymentStatus) {
   return status === 'queued' || status === 'building' || status === 'deploying'
+}
+
+export function useRuntimes() {
+  return useQuery({
+    queryKey: ['runtimes'],
+    queryFn: () => api<Runtime[]>('/runtimes'),
+    staleTime: Infinity,
+  })
+}
+
+export function useDetect() {
+  return useMutation({
+    mutationFn: (input: DetectInput) => api<Detection>('/projects/detect', { method: 'POST', body: JSON.stringify(input) }),
+  })
+}
+
+/** Vista previa del Dockerfile generado para una configuración (sin guardar). */
+export function useDockerfilePreview(spec: BuildSpec, enabled: boolean) {
+  return useQuery({
+    queryKey: ['dockerfile-preview', spec],
+    queryFn: () => api<{ dockerfile: string }>('/dockerfile-preview', { method: 'POST', body: JSON.stringify(spec) }),
+    enabled,
+    retry: false,
+  })
+}
+
+export function useProjectDockerfile(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['projects', id, 'dockerfile'],
+    queryFn: () => api<{ dockerfile: string }>(`/projects/${id}/dockerfile`),
+    enabled,
+  })
 }
 
 export function useProjects() {

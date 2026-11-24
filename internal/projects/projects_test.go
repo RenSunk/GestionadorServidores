@@ -98,3 +98,15 @@ func TestNormalizeInput(t *testing.T) {
 		}
 	}
 }
+
+func TestNetworkFailure(t *testing.T) {
+	if !networkFailure("#8 5.024 npm error code ECONNRESET\n#8 ERROR: process ...") {
+		t.Error("ECONNRESET de npm debería detectarse")
+	}
+	if !networkFailure(`read "https://proxy.golang.org/x.zip": stream error: stream ID 97; INTERNAL_ERROR`) {
+		t.Error("el corte del proxy de Go debería detectarse")
+	}
+	if networkFailure("src/app.ts(3,1): error TS2304: Cannot find name 'foo'") {
+		t.Error("un error de compilación no es de red")
+	}
+}

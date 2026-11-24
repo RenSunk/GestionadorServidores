@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"gestionador/internal/buildspec"
 	"gestionador/internal/gitx"
 	"gestionador/internal/secrets"
 	"gestionador/internal/servers"
@@ -22,6 +23,7 @@ import (
 
 const (
 	repoCheckTimeout = 20 * time.Second
+	detectTimeout    = 90 * time.Second
 	deployTimeout    = 30 * time.Minute
 	healthWait       = 5 * time.Second // tiempo que el contenedor nuevo debe seguir vivo
 	publishTimeout   = 3 * time.Minute
@@ -127,8 +129,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Project, error) {
 		Dockerfile:    in.Dockerfile,
 		ContainerPort: in.ContainerPort,
 		HostPort:      in.HostPort,
+		BuildType:     in.BuildType,
 		CreatedAt:     now,
 		UpdatedAt:     now,
+	}
+	if in.BuildType == BuildRuntime {
+		p.Build = in.spec()
 	}
 	if in.GitToken != "" {
 		enc, err := s.box.Encrypt([]byte(in.GitToken))
@@ -168,6 +174,54 @@ func (s *Service) Delete(ctx context.Context, id string) (warning string, err er
 	}
 	slog.Info("proyecto eliminado", "id", id, "name", p.Name)
 	return warning, nil
+}
+
+// DetectInput es el body de POST /api/projects/detect.
+type DetectInput struct {
+	RepoURL     string `json:"repoUrl"`
+	Branch      string `json:"branch"`
+	GitUsername string `json:"gitUsername"`
+	GitToken    string `json:"gitToken"`
+	RootDir     string `json:"rootDir"`
+	Dockerfile  string `json:"dockerfile"`
+}
+
+// Detect clona el repo (solo el último commit) y deduce el lenguaje y los comandos.
+func (s *Service) Detect(ctx context.Context, in DetectInput) (buildspec.Detection, error) {
+	in.RepoURL = strings.TrimSpace(in.RepoURL)
+	if err := gitx.ValidateURL(in.RepoURL); err != nil {
+		return buildspec.Detection{}, invalid("%s", err.Error())
+	}
+	if strings.TrimSpace(in.Branch) == "" {
+		in.Branch = "main"
+	}
+	rootDir, err := gitx.CleanSubPath(in.RootDir)
+	if err != nil {
+		return buildspec.Detection{}, invalid("carpeta raíz: %s", err.Error())
+	}
+	dockerfile, err := gitx.CleanSubPath(in.Dockerfile)
+	if err != nil {
+		return buildspec.Detection{}, invalid("ruta del Dockerfile inválida")
+	}
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, detectTimeout)
+	defer cancel()
+	dir := filepath.Join(s.buildDir, "detect-"+uuid.NewString())
+	defer os.RemoveAll(dir)
+
+	repo := gitx.Repo{URL: in.RepoURL, Branch: strings.TrimSpace(in.Branch), Username: strings.TrimSpace(in.GitUsername), Token: strings.TrimSpace(in.GitToken)}
+	if _, err := gitx.Clone(ctx, repo, dir); err != nil {
+		return buildspec.Detection{}, &RepoError{Err: err}
+	}
+
+	projectDir := filepath.Join(dir, filepath.FromSlash(rootDir))
+	if info, err := os.Stat(projectDir); err != nil || !info.IsDir() {
+		return buildspec.Detection{}, invalid("la carpeta raíz %q no existe en el repositorio", rootDir)
+	}
+	return buildspec.Detect(projectDir, dockerfile), nil
 }
 
 func (s *Service) ListDeployments(ctx context.Context, projectID string) ([]Deployment, error) {
@@ -365,17 +419,22 @@ func (s *Service) execute(ctx, db context.Context, p Project, d *Deployment, act
 	}
 	fmt.Fprintf(log, "Commit %s: %s\n", shortSHA(commit.SHA), commit.Message)
 
+	contextDir := filepath.Join(dir, filepath.FromSlash(p.RootDir))
+	dockerfile, err := prepareDockerfile(p, contextDir, log)
+	if err != nil {
+		return err
+	}
+
 	// 2. Build: el contexto viaja como tar por stdin de `docker build -`.
 	log.Step("Construyendo imagen en %s", srv.Name)
-	contextDir := filepath.Join(dir, filepath.FromSlash(p.RootDir))
 	pr, pw := io.Pipe()
 	tarErr := make(chan error, 1)
 	go func() {
-		err := gitx.TarContext(contextDir, p.Dockerfile, pw)
+		err := gitx.TarContext(contextDir, dockerfile, pw)
 		tarErr <- err
 		pw.CloseWithError(err)
 	}()
-	code, err := s.servers.Exec(ctx, p.ServerID, buildCmd(p, d.Image), sshx.ExecOptions{Stdin: pr, Stdout: log, Stderr: log})
+	code, err := s.servers.Exec(ctx, p.ServerID, buildCmd(p, d.Image, dockerfile), sshx.ExecOptions{Stdin: pr, Stdout: log, Stderr: log})
 	pr.CloseWithError(io.ErrClosedPipe) // desbloquea al escritor si el build terminó antes de leer todo
 	if tErr := <-tarErr; tErr != nil && !errors.Is(tErr, io.ErrClosedPipe) {
 		return fmt.Errorf("preparar el contexto de build: %w", tErr)
@@ -384,6 +443,10 @@ func (s *Service) execute(ctx, db context.Context, p Project, d *Deployment, act
 		return err
 	}
 	if code != 0 {
+		if networkFailure(log.String()) {
+			return errors.New("el build falló al descargar dependencias por un problema de red en el servidor; " +
+				"suele ser temporal, vuelve a desplegar. Si se repite, revisa la conexión a internet o el DNS del servidor")
+		}
 		return fmt.Errorf("el build falló (código %d); revisa el log", code)
 	}
 
@@ -461,6 +524,55 @@ func (s *Service) runStep(ctx context.Context, p Project, cmd string, log *LogBu
 		return fmt.Errorf("%s (código %d)", what, code)
 	}
 	return nil
+}
+
+// networkSignatures son errores de red típicos de npm, pip, go, maven, apt y curl.
+var networkSignatures = []string{
+	"ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED", "socket hang up",
+	"stream error", "i/o timeout", "TLS handshake timeout", "connection reset by peer",
+	"Temporary failure in name resolution", "Could not resolve host", "Name or service not known",
+	"ReadTimeoutError", "Max retries exceeded", "Failed to establish a new connection",
+	"Could not transfer artifact", "Connection timed out", "unexpected EOF",
+}
+
+// networkFailure revisa el final del log del build buscando un error de red.
+func networkFailure(log string) bool {
+	if len(log) > 16<<10 {
+		log = log[len(log)-16<<10:]
+	}
+	for _, sig := range networkSignatures {
+		if strings.Contains(log, sig) {
+			return true
+		}
+	}
+	return false
+}
+
+// prepareDockerfile devuelve la ruta (relativa al contexto) del Dockerfile a usar.
+// En modo runtime lo genera y lo escribe en el contexto.
+func prepareDockerfile(p Project, contextDir string, log *LogBuffer) (string, error) {
+	if info, err := os.Stat(contextDir); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("la carpeta raíz %q no existe en el repositorio", p.RootDir)
+	}
+
+	if p.BuildType != BuildRuntime {
+		if _, err := os.Stat(filepath.Join(contextDir, filepath.FromSlash(p.Dockerfile))); err != nil {
+			return "", fmt.Errorf("no se encontró %s en el repositorio; puedes crear el proyecto con un lenguaje para generar el Dockerfile automáticamente", p.Dockerfile)
+		}
+		return p.Dockerfile, nil
+	}
+
+	spec := p.Build
+	if err := spec.Normalize(); err != nil {
+		return "", fmt.Errorf("configuración de build inválida: %w", err)
+	}
+	content := buildspec.Dockerfile(spec)
+	if err := os.WriteFile(filepath.Join(contextDir, generatedDockerfile), []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	log.Step("Usando Dockerfile generado (%s)", spec.Label())
+	fmt.Fprint(log, content)
+	return generatedDockerfile, nil
 }
 
 func shortSHA(sha string) string {

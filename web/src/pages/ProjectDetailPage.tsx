@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { type ReactNode, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { DeploymentBadge } from '../components/DeploymentBadge.tsx'
+import { ProjectDockerfile } from '../components/DockerfilePreview.tsx'
 import { LogViewer } from '../components/LogViewer.tsx'
 import { Meter } from '../components/Meter.tsx'
 import { formatDuration, formatRelative } from '../lib/format.ts'
@@ -232,15 +233,31 @@ function Settings({ project: p }: { project: ProjectDetail }) {
           <Info label="Rama" value={p.branch} />
           <Info label="Token de acceso" value={p.hasToken ? 'Configurado (cifrado)' : 'Ninguno (repo público)'} />
           <Info label="Carpeta raíz" value={p.rootDir || '/'} />
-          <Info label="Dockerfile" value={p.dockerfile} />
+          <Info label="Build" value={p.buildType === 'runtime' ? `Generado · ${p.runtimeLabel}` : `Dockerfile del repo (${p.dockerfile})`} />
           <Info label="Puerto del contenedor" value={String(p.containerPort)} />
           <Info label="Puerto publicado" value={p.hostPort ? String(p.hostPort) : 'No publicado'} />
           <Info label="Contenedor" value={<span className="font-mono text-xs">{p.containerName}</span>} />
         </dl>
+        {p.buildType === 'runtime' && (
+          <dl className="mt-2 grid grid-cols-1 text-sm">
+            <Info label="Comando de build" value={<code className="font-mono text-xs">{p.buildCommand || '—'}</code>} />
+            <Info label="Comando de inicio" value={<code className="font-mono text-xs">{p.startCommand}</code>} />
+          </dl>
+        )}
         <p className="mt-3 text-xs text-zinc-500">
           Variables de entorno, límites de CPU/RAM y edición de estos datos llegan en la fase 3.
         </p>
       </section>
+
+      {p.buildType === 'runtime' && (
+        <section className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+          <h2 className="text-sm font-medium">Dockerfile generado</h2>
+          <p className="mt-1 text-xs text-zinc-500">Se crea en cada deploy a partir del lenguaje y los comandos.</p>
+          <div className="mt-3">
+            <ProjectDockerfile projectId={p.id} />
+          </div>
+        </section>
+      )}
 
       <section className="rounded-lg border border-[#d03b3b]/40 p-4">
         <h2 className="text-sm font-medium">Eliminar proyecto</h2>
