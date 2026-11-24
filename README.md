@@ -97,12 +97,23 @@ El usuario puede cambiar lenguaje, versión, comando de build y comando de inici
 
 Los logs del build y del contenedor se ven en vivo (Server-Sent Events). Un solo deploy a la vez por proyecto. Hay un corte breve entre detener el contenedor viejo y arrancar el nuevo; el despliegue sin corte llega con los dominios (fase 4).
 
+## Configuración del proyecto (fase 3)
+
+Todo se edita desde la pestaña **Configuración** y se aplica en el próximo deploy. Si hay cambios guardados que el contenedor aún no usa, el proyecto muestra un aviso con la acción adecuada:
+
+- **Variables de entorno**: se guardan cifradas y llegan al contenedor por stdin de la sesión SSH, sin archivos temporales (funciona también con Docker instalado como snap); los valores no aparecen en la línea de comandos ni en el log del deploy. Admiten varias líneas. Se puede pegar un `.env` completo. Las marcadas **"En build"** se pasan además como `--build-arg` (útil para `NEXT_PUBLIC_*`, `VITE_*`); quedan en los metadatos de la imagen, así que no deben ser secretos. Con un Dockerfile propio hay que declararlas con `ARG`.
+- **Límites de CPU y memoria**: `--cpus` y `--memory` (sin swap extra). Si la app supera la memoria, Docker la reinicia.
+- **Edición**: nombre, repositorio, rama, token, carpeta raíz, tipo de build, lenguaje y comandos, y puertos. El servidor no se puede cambiar.
+- **Aplicar sin reconstruir**: los cambios de variables, puertos o límites se aplican recreando el contenedor con la imagen actual (segundos, sin build). Los cambios de build (repo, comandos, variables de build) piden un deploy completo.
+- **Rollback**: desde la lista de deploys se puede volver a cualquiera de las últimas 3 imágenes que siguen en el servidor, sin reconstruir y con la configuración actual.
+
 ## Roadmap
 
 - [x] Fase 0 — Estructura: binario único, SQLite/Postgres, migraciones, cifrado de secretos
 - [x] Fase 1 — Registrar servidores por SSH y ver sus recursos
 - [x] Fase 2 — Proyectos desde Git con Dockerfile: build, deploy y logs
-- [ ] Fase 3 — Variables de entorno, límites de CPU/RAM, historial y rollback
+- [x] Detección del lenguaje y Dockerfile generado para proyectos sin Dockerfile
+- [x] Fase 3 — Variables de entorno, límites de CPU/RAM, edición y rollback
 - [ ] Fase 4 — Dominios + SSL automático con Caddy
-- [ ] Fase 5 — Detección automática sin Dockerfile, webhooks de Git
+- [ ] Fase 5 — Webhooks de Git (deploy automático al hacer push)
 - [ ] Fase 6 — Usuarios, equipos y permisos; métricas históricas y alertas

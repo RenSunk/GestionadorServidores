@@ -173,3 +173,12 @@ func TestNormalizeRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestDockerfileBuildArgs(t *testing.T) {
+	s := Spec{Runtime: "node", BuildCommand: "npm run build", StartCommand: "npm start", Port: 3000}
+	_ = s.Normalize()
+	got := Dockerfile(s, "NEXT_PUBLIC_API_URL")
+	if !strings.Contains(got, "COPY . .\nARG NEXT_PUBLIC_API_URL\nRUN npm run build\n") {
+		t.Errorf("ARG debe ir antes del build:\n%s", got)
+	}
+}

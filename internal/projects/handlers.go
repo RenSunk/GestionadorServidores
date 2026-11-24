@@ -32,14 +32,19 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects", h.list)
 	mux.HandleFunc("POST /api/projects", h.create)
 	mux.HandleFunc("GET /api/projects/{id}", h.get)
+	mux.HandleFunc("PUT /api/projects/{id}", h.update)
 	mux.HandleFunc("DELETE /api/projects/{id}", h.delete)
+	mux.HandleFunc("GET /api/projects/{id}/env", h.getEnv)
+	mux.HandleFunc("PUT /api/projects/{id}/env", h.setEnv)
 	mux.HandleFunc("POST /api/projects/{id}/deploy", h.deploy)
+	mux.HandleFunc("POST /api/projects/{id}/restart", h.restart)
 	mux.HandleFunc("GET /api/projects/{id}/status", h.status)
 	mux.HandleFunc("GET /api/projects/{id}/logs", h.containerLogs)
 	mux.HandleFunc("GET /api/projects/{id}/dockerfile", h.projectDockerfile)
 
 	mux.HandleFunc("GET /api/deployments/{id}", h.getDeployment)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", h.cancelDeployment)
+	mux.HandleFunc("POST /api/deployments/{id}/redeploy", h.redeploy)
 	mux.HandleFunc("GET /api/deployments/{id}/logs", h.deploymentLogs)
 }
 
@@ -66,6 +71,8 @@ type projectView struct {
 	BaseImage          string      `json:"baseImage"`
 	BuildCommand       string      `json:"buildCommand"`
 	StartCommand       string      `json:"startCommand"`
+	CPULimit           *float64    `json:"cpuLimit"`
+	MemoryLimitMB      *int        `json:"memoryLimitMb"`
 	URL                string      `json:"url"`
 	ContainerName      string      `json:"containerName"`
 	CreatedAt          time.Time   `json:"createdAt"`
@@ -75,7 +82,8 @@ type projectView struct {
 
 type projectDetailView struct {
 	projectView
-	Deployments []Deployment `json:"deployments"`
+	Deployments []Deployment   `json:"deployments"`
+	Pending     PendingChanges `json:"pending"`
 }
 
 type deploymentDetailView struct {
@@ -97,6 +105,11 @@ func (h *Handler) view(p Project, last *Deployment) projectView {
 		v.Runtime, v.RuntimeVersion, v.BaseImage = p.Build.Runtime, p.Build.Version, p.Build.BaseImage
 		v.BuildCommand, v.StartCommand, v.RuntimeLabel = p.Build.BuildCommand, p.Build.StartCommand, p.Build.Label()
 	}
+	if p.CPULimitMilli != nil {
+		cpu := float64(*p.CPULimitMilli) / 1000
+		v.CPULimit = &cpu
+	}
+	v.MemoryLimitMB = p.MemoryLimitMB
 	if p.HostPort != nil {
 		v.URL = fmt.Sprintf("http://%s:%d", hostOnly(p.ServerHost), *p.HostPort)
 	}
@@ -125,16 +138,25 @@ func (h *Handler) detect(w http.ResponseWriter, r *http.Request) {
 
 // dockerfilePreview genera el Dockerfile sin guardar nada (vista previa del formulario).
 func (h *Handler) dockerfilePreview(w http.ResponseWriter, r *http.Request) {
-	var spec buildspec.Spec
-	if err := httpx.DecodeJSON(w, r, &spec); err != nil {
+	var in struct {
+		buildspec.Spec
+		BuildArgs []string `json:"buildArgs"`
+	}
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := spec.Normalize(); err != nil {
+	if err := in.Spec.Normalize(); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"dockerfile": buildspec.Dockerfile(spec)})
+	for _, a := range in.BuildArgs {
+		if !envKeyRe.MatchString(a) {
+			httpx.WriteError(w, http.StatusBadRequest, "nombre de variable inválido")
+			return
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"dockerfile": buildspec.Dockerfile(in.Spec, in.BuildArgs...)})
 }
 
 func (h *Handler) projectDockerfile(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +174,12 @@ func (h *Handler) projectDockerfile(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"dockerfile": buildspec.Dockerfile(spec)})
+	env, err := h.svc.GetEnv(r.Context(), p.ID)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"dockerfile": buildspec.Dockerfile(spec, envKeys(buildVars(env))...)})
 }
 
 // ---------- Proyectos ----------
@@ -206,7 +233,69 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	if deps == nil {
 		deps = []Deployment{}
 	}
-	httpx.WriteJSON(w, http.StatusOK, projectDetailView{projectView: h.view(p, last), Deployments: deps})
+	pending, err := h.svc.Pending(r.Context(), p)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, projectDetailView{projectView: h.view(p, last), Deployments: deps, Pending: pending})
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	var in UpdateInput
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	p, err := h.svc.Update(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, h.view(p, nil))
+}
+
+func (h *Handler) getEnv(w http.ResponseWriter, r *http.Request) {
+	vars, err := h.svc.GetEnv(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string][]EnvVar{"vars": vars})
+}
+
+func (h *Handler) setEnv(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Vars []EnvVar `json:"vars"`
+	}
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	vars, err := h.svc.SetEnv(r.Context(), r.PathValue("id"), in.Vars)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string][]EnvVar{"vars": vars})
+}
+
+func (h *Handler) restart(w http.ResponseWriter, r *http.Request) {
+	d, err := h.svc.Restart(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, d)
+}
+
+func (h *Handler) redeploy(w http.ResponseWriter, r *http.Request) {
+	d, err := h.svc.Redeploy(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, d)
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -391,7 +480,8 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound), errors.Is(err, ErrDeploymentNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 	case errors.As(err, &portErr), errors.Is(err, ErrDuplicateName),
-		errors.Is(err, ErrDeployInProgress), errors.Is(err, ErrNotRunning), errors.Is(err, ErrTooLateToCancel):
+		errors.Is(err, ErrDeployInProgress), errors.Is(err, ErrNotRunning), errors.Is(err, ErrTooLateToCancel),
+		errors.Is(err, ErrNothingToRestore):
 		httpx.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		slog.Error("projects: error interno", "err", err)

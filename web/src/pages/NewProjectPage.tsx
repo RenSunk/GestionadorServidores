@@ -1,8 +1,8 @@
 import { type FormEvent, type ReactNode, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { DockerfilePreview } from '../components/DockerfilePreview.tsx'
+import { type Build, BuildConfig } from '../components/BuildConfig.tsx'
+import { ErrorBox, Field } from '../components/Form.tsx'
 import {
-  type BuildType,
   type Detection,
   type Runtime,
   useCreateProject,
@@ -10,19 +10,7 @@ import {
   useRuntimes,
 } from '../lib/projects.ts'
 import { useServers } from '../lib/servers.ts'
-
-const inputClass =
-  'mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none disabled:opacity-50'
-const monoInput = `${inputClass} font-mono text-xs`
-
-type Build = {
-  type: BuildType
-  runtime: string
-  version: string
-  baseImage: string
-  buildCommand: string
-  startCommand: string
-}
+import { inputClass } from '../lib/ui.ts'
 
 export function NewProjectPage() {
   const navigate = useNavigate()
@@ -206,7 +194,12 @@ export function NewProjectPage() {
             <BuildConfig
               build={build}
               setBuild={setBuild}
-              analysis={analysis}
+              hasDockerfile={analysis.hasDockerfile}
+              suggestion={
+                analysis.runtime
+                  ? { runtime: analysis.runtime, version: analysis.version, baseImage: '', buildCommand: analysis.buildCommand, startCommand: analysis.startCommand, label: 'detectado' }
+                  : undefined
+              }
               runtimes={runtimes.data}
               port={Number(ports.containerPort) || 0}
               onRuntimeChange={(rt) => setPorts((p) => ({ ...p, containerPort: String(rt.defaultPort) }))}
@@ -325,163 +318,6 @@ function AnalysisSummary({ analysis: a, runtimes, dockerfilePath }: { analysis: 
   )
 }
 
-type BuildConfigProps = {
-  build: Build
-  setBuild: (b: Build) => void
-  analysis: Detection
-  runtimes: Runtime[]
-  port: number
-  onRuntimeChange: (rt: Runtime) => void
-  dockerfilePath: string
-}
-
-function BuildConfig({ build, setBuild, analysis, runtimes, port, onRuntimeChange, dockerfilePath }: BuildConfigProps) {
-  const [showPreview, setShowPreview] = useState(false)
-  const rt = runtimes.find((r) => r.id === build.runtime)
-
-  function selectRuntime(id: string) {
-    const next = runtimes.find((r) => r.id === id)
-    if (!next) return
-    // Si vuelve al lenguaje detectado, recupera los comandos sugeridos; si no, quedan vacíos con ejemplos.
-    const isDetected = id === analysis.runtime
-    setBuild({
-      ...build,
-      runtime: id,
-      version: isDetected ? analysis.version : next.defaultVersion,
-      baseImage: '',
-      buildCommand: isDetected ? analysis.buildCommand : '',
-      startCommand: isDetected ? analysis.startCommand : '',
-    })
-    onRuntimeChange(next)
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Choice
-          checked={build.type === 'dockerfile'}
-          disabled={!analysis.hasDockerfile}
-          onChange={() => setBuild({ ...build, type: 'dockerfile' })}
-          title="Usar el Dockerfile del repositorio"
-          hint={analysis.hasDockerfile ? dockerfilePath : `No hay ${dockerfilePath} en el repositorio`}
-        />
-        <Choice
-          checked={build.type === 'runtime'}
-          onChange={() => setBuild({ ...build, type: 'runtime' })}
-          title="Elegir lenguaje y comandos"
-          hint="Generamos el Dockerfile automáticamente"
-        />
-      </div>
-
-      {build.type === 'runtime' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-[1fr_10rem] gap-3">
-            <Field label="Lenguaje">
-              <select required value={build.runtime} onChange={(e) => selectRuntime(e.target.value)} className={inputClass}>
-                {!build.runtime && <option value="">Elige un lenguaje…</option>}
-                {runtimes.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                    {r.id === analysis.runtime ? ' (detectado)' : ''}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {rt && !rt.needsBaseImage && (
-              <Field label="Versión">
-                <input
-                  required
-                  list={`versions-${rt.id}`}
-                  value={build.version}
-                  onChange={(e) => setBuild({ ...build, version: e.target.value })}
-                  className={inputClass}
-                />
-                <datalist id={`versions-${rt.id}`}>
-                  {rt.versions?.map((v) => (
-                    <option key={v} value={v} />
-                  ))}
-                </datalist>
-              </Field>
-            )}
-          </div>
-
-          {rt?.needsBaseImage && (
-            <Field label="Imagen base de Docker" hint="Cualquier imagen pública: php:8.3-cli, ruby:3.3-slim, mcr.microsoft.com/dotnet/sdk:8.0…">
-              <input
-                required
-                value={build.baseImage}
-                onChange={(e) => setBuild({ ...build, baseImage: e.target.value })}
-                placeholder="ruby:3.3-slim"
-                className={monoInput}
-              />
-            </Field>
-          )}
-
-          {rt && (
-            <>
-              <Field label="Comando de build" hint="Se ejecuta al construir la imagen. Opcional. Encadena pasos con &&.">
-                <input
-                  value={build.buildCommand}
-                  onChange={(e) => setBuild({ ...build, buildCommand: e.target.value })}
-                  placeholder={rt.buildPlaceholder}
-                  className={monoInput}
-                />
-              </Field>
-              <Field label="Comando de inicio" hint="Arranca tu app. Debe escuchar en 0.0.0.0 y en el puerto $PORT.">
-                <input
-                  required
-                  value={build.startCommand}
-                  onChange={(e) => setBuild({ ...build, startCommand: e.target.value })}
-                  placeholder={rt.startPlaceholder}
-                  className={monoInput}
-                />
-              </Field>
-
-              <div>
-                <button type="button" onClick={() => setShowPreview((v) => !v)} className="text-sm text-zinc-400 hover:text-zinc-200">
-                  {showPreview ? '▾' : '▸'} Ver Dockerfile generado
-                </button>
-                {showPreview && (
-                  <div className="mt-2">
-                    <DockerfilePreview
-                      spec={{
-                        runtime: build.runtime,
-                        version: build.version,
-                        baseImage: build.baseImage,
-                        buildCommand: build.buildCommand,
-                        startCommand: build.startCommand,
-                        port,
-                      }}
-                    />
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function Choice(props: { checked: boolean; disabled?: boolean; onChange: () => void; title: string; hint: string }) {
-  return (
-    <label
-      className={`rounded-md border p-3 text-sm ${
-        props.disabled
-          ? 'cursor-not-allowed border-zinc-800 opacity-50'
-          : props.checked
-            ? 'cursor-pointer border-zinc-400 bg-zinc-900'
-            : 'cursor-pointer border-zinc-800 hover:border-zinc-700'
-      }`}
-    >
-      <input type="radio" checked={props.checked} disabled={props.disabled} onChange={props.onChange} className="sr-only" />
-      <div className="font-medium">{props.title}</div>
-      <div className="mt-1 text-xs text-zinc-500">{props.hint}</div>
-    </label>
-  )
-}
-
 function Section({ step, title, children }: { step: number; title: string; children: ReactNode }) {
   return (
     <section className="space-y-4">
@@ -494,24 +330,7 @@ function Section({ step, title, children }: { step: number; title: string; child
   )
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <label className="block min-w-0">
-      <span className="text-sm text-zinc-300">{label}</span>
-      {children}
-      {hint && <span className="mt-1 block text-xs text-zinc-500">{hint}</span>}
-    </label>
-  )
-}
 
-function ErrorBox({ children }: { children: ReactNode }) {
-  return (
-    <div className="mt-3 rounded-md border border-[#d03b3b]/50 bg-[#d03b3b]/10 p-3 text-sm text-zinc-200">
-      <span className="mr-1.5 text-[#d03b3b]">✕</span>
-      {children}
-    </div>
-  )
-}
 
 /** "https://github.com/user/mi-api.git" → "mi-api" */
 function repoSlug(url: string) {

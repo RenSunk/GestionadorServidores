@@ -22,7 +22,8 @@ func NewStore(db *database.DB) *Store {
 
 const projectColumns = `p.id, p.name, p.slug, p.server_id, p.repo_url, p.branch, p.git_username, p.git_token_enc,
 	p.root_dir, p.dockerfile, p.container_port, p.host_port, p.build_type, p.runtime, p.runtime_version,
-	p.base_image, p.build_command, p.start_command, p.created_at, p.updated_at, s.name, s.host`
+	p.base_image, p.build_command, p.start_command, p.env_enc, p.cpu_limit_milli, p.memory_limit_mb,
+	p.build_config_updated_at, p.runtime_config_updated_at, p.created_at, p.updated_at, s.name, s.host`
 
 const projectFrom = ` FROM projects p JOIN servers s ON s.id = p.server_id`
 
@@ -30,18 +31,34 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scanProject(row scanner) (Project, error) {
 	var (
-		p        Project
-		hostPort sql.NullInt64
+		p                  Project
+		hostPort, cpu, mem sql.NullInt64
+		buildAt, runtimeAt sql.NullTime
 	)
 	err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.ServerID, &p.RepoURL, &p.Branch, &p.GitUsername, &p.GitTokenEnc,
 		&p.RootDir, &p.Dockerfile, &p.ContainerPort, &hostPort, &p.BuildType, &p.Build.Runtime, &p.Build.Version,
-		&p.Build.BaseImage, &p.Build.BuildCommand, &p.Build.StartCommand, &p.CreatedAt, &p.UpdatedAt, &p.ServerName, &p.ServerHost)
+		&p.Build.BaseImage, &p.Build.BuildCommand, &p.Build.StartCommand, &p.EnvEnc, &cpu, &mem,
+		&buildAt, &runtimeAt, &p.CreatedAt, &p.UpdatedAt, &p.ServerName, &p.ServerHost)
 	p.Build.Port = p.ContainerPort
-	if hostPort.Valid {
-		v := int(hostPort.Int64)
-		p.HostPort = &v
-	}
+	p.HostPort, p.CPULimitMilli, p.MemoryLimitMB = nullInt(hostPort), nullInt(cpu), nullInt(mem)
+	p.BuildConfigUpdatedAt, p.RuntimeConfigUpdatedAt = nullTime(buildAt), nullTime(runtimeAt)
 	return p, err
+}
+
+func nullInt(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	i := int(v.Int64)
+	return &i
+}
+
+func nullTime(v sql.NullTime) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t := v.Time
+	return &t
 }
 
 func (st *Store) ListProjects(ctx context.Context) ([]Project, error) {
@@ -87,6 +104,34 @@ func (st *Store) CreateProject(ctx context.Context, p Project) error {
 	return err
 }
 
+// UpdateProject guarda todos los campos editables (no cambia slug ni servidor).
+func (st *Store) UpdateProject(ctx context.Context, p Project) error {
+	res, err := st.db.ExecContext(ctx, `
+		UPDATE projects SET name = $2, repo_url = $3, branch = $4, git_username = $5, git_token_enc = $6,
+			root_dir = $7, dockerfile = $8, container_port = $9, host_port = $10, build_type = $11, runtime = $12,
+			runtime_version = $13, base_image = $14, build_command = $15, start_command = $16, env_enc = $17,
+			cpu_limit_milli = $18, memory_limit_mb = $19, build_config_updated_at = $20,
+			runtime_config_updated_at = $21, updated_at = $22
+		WHERE id = $1`,
+		p.ID, p.Name, p.RepoURL, p.Branch, p.GitUsername, p.GitTokenEnc,
+		p.RootDir, p.Dockerfile, p.ContainerPort, p.HostPort, p.BuildType, p.Build.Runtime,
+		p.Build.Version, p.Build.BaseImage, p.Build.BuildCommand, p.Build.StartCommand, p.EnvEnc,
+		p.CPULimitMilli, p.MemoryLimitMB, p.BuildConfigUpdatedAt, p.RuntimeConfigUpdatedAt, p.UpdatedAt)
+	if err != nil {
+		if isUniqueViolation(err) {
+			if strings.Contains(err.Error(), "host_port") && p.HostPort != nil {
+				return &PortInUseError{Port: *p.HostPort}
+			}
+			return ErrDuplicateName
+		}
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (st *Store) DeleteProject(ctx context.Context, id string) error {
 	res, err := st.db.ExecContext(ctx, `DELETE FROM projects WHERE id = $1`, id)
 	if err != nil {
@@ -101,19 +146,21 @@ func (st *Store) DeleteProject(ctx context.Context, id string) error {
 // ---------- Deploys ----------
 
 // Las listas no incluyen el log (puede pesar hasta 2 MB por deploy).
-const deploymentColumns = `id, project_id, status, commit_sha, commit_message, image, error, created_at, started_at, finished_at`
+const deploymentColumns = `id, project_id, status, commit_sha, commit_message, image, source_deployment_id, error, created_at, started_at, finished_at`
 
 func scanDeployment(row scanner, withLog bool) (Deployment, error) {
 	var (
 		d                 Deployment
 		started, finished sql.NullTime
+		source            sql.NullString
 	)
-	dest := []any{&d.ID, &d.ProjectID, &d.Status, &d.CommitSHA, &d.CommitMessage, &d.Image, &d.Error,
+	dest := []any{&d.ID, &d.ProjectID, &d.Status, &d.CommitSHA, &d.CommitMessage, &d.Image, &source, &d.Error,
 		&d.CreatedAt, &started, &finished}
 	if withLog {
 		dest = append(dest, &d.Log)
 	}
 	err := row.Scan(dest...)
+	d.SourceDeploymentID = source.String
 	if started.Valid {
 		t := started.Time
 		d.StartedAt = &t
@@ -127,9 +174,43 @@ func scanDeployment(row scanner, withLog bool) (Deployment, error) {
 
 func (st *Store) CreateDeployment(ctx context.Context, d Deployment) error {
 	_, err := st.db.ExecContext(ctx, `
-		INSERT INTO deployments (id, project_id, status, created_at) VALUES ($1, $2, $3, $4)`,
-		d.ID, d.ProjectID, d.Status, d.CreatedAt)
+		INSERT INTO deployments (id, project_id, status, commit_sha, commit_message, image, source_deployment_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		d.ID, d.ProjectID, d.Status, d.CommitSHA, d.CommitMessage, d.Image, nullString(d.SourceDeploymentID), d.CreatedAt)
 	return err
+}
+
+func nullString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
+
+// LatestSucceeded devuelve el último deploy exitoso del proyecto (el que está en ejecución,
+// porque un deploy fallido restaura el anterior). ErrNothingToRestore si no hay ninguno.
+func (st *Store) LatestSucceeded(ctx context.Context, projectID string) (Deployment, error) {
+	d, err := scanDeployment(st.db.QueryRowContext(ctx, `SELECT `+deploymentColumns+` FROM deployments
+		WHERE project_id = $1 AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1`, projectID), false)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Deployment{}, ErrNothingToRestore
+	}
+	return d, err
+}
+
+// LastSuccessTimes devuelve cuándo se creó el último deploy exitoso (cualquiera) y el
+// último exitoso que construyó imagen. Sirve para saber si hay cambios sin aplicar.
+func (st *Store) LastSuccessTimes(ctx context.Context, projectID string) (anyAt, buildAt *time.Time, err error) {
+	// Se lee la columna directamente (no MAX()): en SQLite un agregado pierde el tipo TIMESTAMP.
+	last := func(filter string) (*time.Time, error) {
+		var t time.Time
+		err := st.db.QueryRowContext(ctx, `SELECT created_at FROM deployments
+			WHERE project_id = $1 AND status = 'succeeded'`+filter+` ORDER BY created_at DESC LIMIT 1`, projectID).Scan(&t)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return &t, err
+	}
+	if anyAt, err = last(""); err != nil {
+		return nil, nil, err
+	}
+	buildAt, err = last(" AND source_deployment_id IS NULL")
+	return anyAt, buildAt, err
 }
 
 func (st *Store) GetDeployment(ctx context.Context, id string) (Deployment, error) {

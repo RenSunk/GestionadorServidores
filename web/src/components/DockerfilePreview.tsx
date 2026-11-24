@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { type BuildSpec, useDockerfilePreview, useProjectDockerfile } from '../lib/projects.ts'
 
 /** Vista previa del Dockerfile para una configuración que aún no se guarda. */
-export function DockerfilePreview({ spec }: { spec: BuildSpec }) {
+export function DockerfilePreview({ spec, buildArgs }: { spec: BuildSpec; buildArgs?: string[] }) {
   // Espera a que el usuario deje de escribir para no pedir una vista previa por tecla.
-  const debounced = useDebounced(spec, 400)
+  const debounced = useDebounced({ ...spec, buildArgs: buildArgs ?? [] }, 400)
   const ready = !!debounced.runtime && !!debounced.startCommand
   const { data, error, isFetching } = useDockerfilePreview(debounced, ready)
 

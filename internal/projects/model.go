@@ -27,8 +27,14 @@ type Project struct {
 	HostPort      *int
 	BuildType     BuildType
 	Build         buildspec.Spec // solo si BuildType == BuildRuntime (Port = ContainerPort)
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	EnvEnc        string         // JSON cifrado de []EnvVar; nunca sale por la API así
+	CPULimitMilli *int           // nil = sin límite
+	MemoryLimitMB *int           // nil = sin límite
+	// Último cambio de configuración que requiere reconstruir la imagen / recrear el contenedor.
+	BuildConfigUpdatedAt   *time.Time
+	RuntimeConfigUpdatedAt *time.Time
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 
 	// Solo lectura (JOIN con servers).
 	ServerName string
@@ -67,11 +73,14 @@ type Deployment struct {
 	CommitSHA     string           `json:"commitSha"`
 	CommitMessage string           `json:"commitMessage"`
 	Image         string           `json:"image"`
-	Error         string           `json:"error"`
-	Log           string           `json:"-"`
-	CreatedAt     time.Time        `json:"createdAt"`
-	StartedAt     *time.Time       `json:"startedAt"`
-	FinishedAt    *time.Time       `json:"finishedAt"`
+	// SourceDeploymentID: si no está vacío, este deploy reutilizó la imagen de otro
+	// (rollback o reinicio) en vez de construir una nueva.
+	SourceDeploymentID string     `json:"sourceDeploymentId"`
+	Error              string     `json:"error"`
+	Log                string     `json:"-"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	StartedAt          *time.Time `json:"startedAt"`
+	FinishedAt         *time.Time `json:"finishedAt"`
 }
 
 // CreateInput es el body de POST /api/projects.
@@ -93,6 +102,40 @@ type CreateInput struct {
 	BaseImage      string    `json:"baseImage"`
 	BuildCommand   string    `json:"buildCommand"`
 	StartCommand   string    `json:"startCommand"`
+}
+
+// UpdateInput es el body de PUT /api/projects/{id}. El servidor no se puede cambiar
+// (el contenedor vive en él); GitToken vacío conserva el actual.
+type UpdateInput struct {
+	CreateInput
+	ClearToken    bool     `json:"clearToken"`
+	CPULimit      *float64 `json:"cpuLimit"`      // núcleos, ej. 0.5
+	MemoryLimitMB *int     `json:"memoryLimitMb"` // MB
+}
+
+const (
+	minMemoryMB = 32
+	maxMemoryMB = 1 << 20
+	maxCPUs     = 256
+)
+
+// limits valida los límites y convierte la CPU a milésimas.
+func (in UpdateInput) limits() (cpuMilli, memMB *int, err error) {
+	if in.CPULimit != nil {
+		if *in.CPULimit < 0.01 || *in.CPULimit > maxCPUs {
+			return nil, nil, invalid("el límite de CPU debe estar entre 0.01 y %d núcleos", maxCPUs)
+		}
+		v := int(*in.CPULimit*1000 + 0.5)
+		cpuMilli = &v
+	}
+	if in.MemoryLimitMB != nil {
+		if *in.MemoryLimitMB < minMemoryMB || *in.MemoryLimitMB > maxMemoryMB {
+			return nil, nil, invalid("el límite de memoria debe ser de al menos %d MB", minMemoryMB)
+		}
+		v := *in.MemoryLimitMB
+		memMB = &v
+	}
+	return cpuMilli, memMB, nil
 }
 
 // spec arma la configuración de build generada a partir del input.
@@ -124,6 +167,7 @@ var (
 	ErrDeployInProgress   = errors.New("ya hay un deploy en curso para este proyecto")
 	ErrNotRunning         = errors.New("el deploy ya terminó")
 	ErrTooLateToCancel    = errors.New("el deploy ya está publicando el contenedor; no se puede cancelar en este punto")
+	ErrNothingToRestore   = errors.New("este proyecto todavía no tiene un deploy exitoso")
 )
 
 // PortInUseError: otro proyecto ya publica ese puerto en el mismo servidor.

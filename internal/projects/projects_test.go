@@ -2,6 +2,7 @@ package projects
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -108,5 +109,80 @@ func TestNetworkFailure(t *testing.T) {
 	}
 	if networkFailure("src/app.ts(3,1): error TS2304: Cannot find name 'foo'") {
 		t.Error("un error de compilación no es de red")
+	}
+}
+
+func TestNormalizeEnv(t *testing.T) {
+	got, err := normalizeEnv([]EnvVar{{Key: " Z_KEY ", Value: "a=b c"}, {}, {Key: "API_URL", Value: "https://x", Build: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Key != "API_URL" || got[1].Key != "Z_KEY" || got[1].Value != "a=b c" {
+		t.Fatalf("%+v", got)
+	}
+	for _, bad := range [][]EnvVar{
+		{{Key: "1ABC", Value: "x"}},
+		{{Key: "A-B", Value: "x"}},
+		{{Key: "PORT", Value: "80"}},
+		{{Key: "A", Value: "1"}, {Key: "A", Value: "2"}},
+		{{Key: "HOME", Value: "/x"}},
+		{{Key: "DOCKER_HOST", Value: "tcp://evil"}},
+	} {
+		if _, err := normalizeEnv(bad); err == nil {
+			t.Errorf("esperaba error: %+v", bad)
+		}
+	}
+}
+
+func TestRunCmdKeepsSecretsOffCommandLine(t *testing.T) {
+	cpu, mem, hp := 1500, 512, 8080
+	p := Project{ID: "p1", Slug: "api", ContainerPort: 3000, HostPort: &hp, CPULimitMilli: &cpu, MemoryLimitMB: &mem}
+	cmd := runCmd(p, "d1", "gestionador/api:d1", []string{"DB_PASS"})
+	for _, want := range []string{". /dev/stdin && docker run -d", "-e DB_PASS ", "-e PORT=3000", "-p 8080:3000", "--cpus 1.500", "--memory 512m --memory-swap 512m"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("falta %q en %s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "mktemp") || strings.Contains(cmd, "/tmp") {
+		t.Errorf("no debe usar archivos temporales (snap tiene /tmp privado): %s", cmd)
+	}
+	// El script se carga en un shell real: el valor debe llegar sin expandirse ni cortarse.
+	tricky := "s3cr3t 'x' \"y\" $HOME `id` \\n\nsegunda línea"
+	sh := exec.Command("sh", "-c", `. /dev/stdin && printf %s "$DB_PASS"`)
+	sh.Stdin = strings.NewReader(envScript([]EnvVar{{Key: "DB_PASS", Value: tricky}}))
+	out, err := sh.Output()
+	if err != nil || string(out) != tricky {
+		t.Errorf("envScript: got %q (%v), want %q", out, err, tricky)
+	}
+
+	build := buildCmd(p, "img", "Dockerfile", []EnvVar{{Key: "NEXT_PUBLIC_API", Value: "https://a b"}})
+	if !strings.Contains(build, `--build-arg 'NEXT_PUBLIC_API=https://a b' -`) {
+		t.Errorf("build args mal escapados: %s", build)
+	}
+}
+
+func TestParseStatusImages(t *testing.T) {
+	st := parseStatus("images:d3 d2 d1 \nmissing\n")
+	if st.State != "missing" || len(st.Images) != 3 || st.Images[0] != "d3" {
+		t.Fatalf("%+v", st)
+	}
+	st = parseStatus("images:\nrunning|2026-01-01T00:00:00Z|0|d3\n1.5%|10MiB / 1GiB|1%|1kB / 2kB\n")
+	if st.State != "running" || st.DeploymentID != "d3" || len(st.Images) != 0 || st.MemoryUsage != "10MiB / 1GiB" {
+		t.Fatalf("%+v", st)
+	}
+}
+
+func TestLimits(t *testing.T) {
+	cpu, mem := 0.25, 256
+	c, m, err := UpdateInput{CPULimit: &cpu, MemoryLimitMB: &mem}.limits()
+	if err != nil || *c != 250 || *m != 256 {
+		t.Fatalf("%v %v %v", c, m, err)
+	}
+	if formatCPU(250) != "0.25" || formatCPU(2000) != "2" {
+		t.Errorf("formatCPU: %s %s", formatCPU(250), formatCPU(2000))
+	}
+	tiny := 8
+	if _, _, err := (UpdateInput{MemoryLimitMB: &tiny}).limits(); err == nil {
+		t.Error("8 MB debería rechazarse")
 	}
 }

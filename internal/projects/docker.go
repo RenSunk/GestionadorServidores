@@ -15,9 +15,21 @@ import (
 const keepImages = 3 // imágenes por proyecto que se conservan (para rollback en la fase 3)
 
 // buildCmd lee el contexto (tar) por stdin. dockerfile es relativo al contexto.
-func buildCmd(p Project, image, dockerfile string) string {
-	return fmt.Sprintf("BUILDKIT_PROGRESS=plain docker build --label gestionador.project=%s -t %s -f %s -",
+// Las variables de build van como --build-arg (quedan en los metadatos de la imagen).
+func buildCmd(p Project, image, dockerfile string, args []EnvVar) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "BUILDKIT_PROGRESS=plain docker build --label gestionador.project=%s -t %s -f %s",
 		q.Quote(p.ID), q.Quote(image), q.Quote(dockerfile))
+	for _, a := range args {
+		b.WriteString(" --build-arg " + q.Quote(a.Key+"="+a.Value))
+	}
+	b.WriteString(" -")
+	return b.String()
+}
+
+// imageExistsCmd falla si la imagen ya no está en el servidor.
+func imageExistsCmd(image string) string {
+	return "docker image inspect " + q.Quote(image) + " >/dev/null 2>&1"
 }
 
 // stopPreviousCmd detiene el contenedor actual y lo renombra a gs-<slug>-prev
@@ -32,16 +44,31 @@ else
 fi`, name, prev)
 }
 
-func runCmd(p Project, deploymentID, image string) string {
+// runCmd crea el contenedor. Los valores de las variables llegan por stdin como
+// `export K='v'` y se cargan en el entorno del cliente docker; en la línea de comandos
+// solo van los nombres (`-e K`), así no se ven en `ps`. No se usan archivos: con Docker
+// instalado como snap, /tmp es privado y docker no vería un archivo temporal.
+func runCmd(p Project, deploymentID, image string, envKeys []string) string {
 	args := []string{
-		"docker run -d",
+		". /dev/stdin && docker run -d",
 		"--name " + p.containerName(),
 		"--restart unless-stopped",
 		"--label gestionador.project=" + q.Quote(p.ID),
 		"--label gestionador.deployment=" + q.Quote(deploymentID),
 	}
+	for _, k := range envKeys {
+		args = append(args, "-e "+k) // nombres ya validados: [A-Za-z_][A-Za-z0-9_]*
+	}
+	args = append(args, fmt.Sprintf("-e PORT=%d", p.ContainerPort))
 	if p.HostPort != nil {
 		args = append(args, fmt.Sprintf("-p %d:%d", *p.HostPort, p.ContainerPort))
+	}
+	if p.CPULimitMilli != nil {
+		args = append(args, fmt.Sprintf("--cpus %d.%03d", *p.CPULimitMilli/1000, *p.CPULimitMilli%1000))
+	}
+	if p.MemoryLimitMB != nil {
+		// Igual que memory: sin swap extra, el límite es real.
+		args = append(args, fmt.Sprintf("--memory %[1]dm --memory-swap %[1]dm", *p.MemoryLimitMB))
 	}
 	args = append(args, q.Quote(image))
 	return strings.Join(args, " ")
@@ -53,7 +80,8 @@ func inspectCmd(p Project) string {
 }
 
 func failedLogsCmd(p Project) string {
-	return fmt.Sprintf("docker logs --tail 50 %s 2>&1", p.containerName())
+	// Si docker run falló, el contenedor no existe: no hay logs que mostrar.
+	return fmt.Sprintf("if docker container inspect %[1]s >/dev/null 2>&1; then docker logs --tail 50 %[1]s 2>&1; fi", p.containerName())
 }
 
 // rollbackCmd elimina el contenedor nuevo y restaura el anterior si existía.
@@ -83,12 +111,14 @@ func logsCmd(p Project, tail int) string {
 	return fmt.Sprintf("docker logs -f --timestamps --tail %d %s 2>&1", tail, p.containerName())
 }
 
-// statusCmd imprime el estado del contenedor y, si corre, su consumo.
+// statusCmd imprime las imágenes disponibles para rollback, el estado del contenedor
+// y, si corre, su consumo.
 func statusCmd(p Project) string {
 	name := p.containerName()
-	return fmt.Sprintf(`if ! docker container inspect %[1]s >/dev/null 2>&1; then echo missing; exit 0; fi
+	return fmt.Sprintf(`echo "images:$(docker image ls %[2]s --format '{{.Tag}}' 2>/dev/null | tr '\n' ' ')"
+if ! docker container inspect %[1]s >/dev/null 2>&1; then echo missing; exit 0; fi
 docker inspect -f '{{.State.Status}}|{{.State.StartedAt}}|{{.RestartCount}}|{{index .Config.Labels "gestionador.deployment"}}' %[1]s
-docker stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}' %[1]s 2>/dev/null || true`, name)
+docker stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}' %[1]s 2>/dev/null || true`, name, p.imageRepo())
 }
 
 // ContainerStatus es el estado actual del contenedor de un proyecto.
@@ -101,15 +131,22 @@ type ContainerStatus struct {
 	MemoryUsage   string     `json:"memoryUsage"`
 	MemoryPercent float64    `json:"memoryPercent"`
 	NetIO         string     `json:"netIO"`
+	// Images son los IDs de deploy cuya imagen sigue en el servidor (se puede volver a ellos).
+	Images []string `json:"images"`
 }
 
 func parseStatus(out string) ContainerStatus {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
+	images := []string{}
+	if len(lines) > 0 && strings.HasPrefix(lines[0], "images:") {
+		images = strings.Fields(strings.TrimPrefix(lines[0], "images:"))
+		lines = lines[1:]
+	}
 	if len(lines) == 0 || lines[0] == "missing" || lines[0] == "" {
-		return ContainerStatus{State: "missing"}
+		return ContainerStatus{State: "missing", Images: images}
 	}
 
-	var st ContainerStatus
+	st := ContainerStatus{Images: images}
 	f := strings.Split(lines[0], "|")
 	if len(f) >= 4 {
 		st.State = f[0]

@@ -161,7 +161,9 @@ func (s Spec) Label() string {
 // Dockerfile genera el Dockerfile. Debe llamarse después de Normalize.
 // Es de una sola etapa, igual que Render: el build corre dentro de la imagen
 // y el comando de inicio se ejecuta con `exec` para recibir las señales de parada.
-func Dockerfile(s Spec) string {
+// buildArgs son los nombres de las variables disponibles durante el build
+// (ya validados como identificadores); se declaran con ARG antes del build.
+func Dockerfile(s Spec, buildArgs ...string) string {
 	rt, _ := Find(s.Runtime)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Generado por Gestionador (%s)\n", s.Label())
@@ -172,6 +174,9 @@ func Dockerfile(s Spec) string {
 		fmt.Fprintf(&b, "RUN %s\n", cmd)
 	}
 	b.WriteString("COPY . .\n")
+	for _, a := range buildArgs {
+		fmt.Fprintf(&b, "ARG %s\n", a)
+	}
 	if s.BuildCommand != "" {
 		fmt.Fprintf(&b, "RUN %s\n", s.BuildCommand)
 	}

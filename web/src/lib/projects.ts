@@ -42,7 +42,12 @@ export type BuildSpec = {
   buildCommand: string
   startCommand: string
   port: number
+  buildArgs?: string[]
 }
+
+export type EnvVar = { key: string; value: string; build: boolean }
+
+export type PendingChanges = { build: boolean; runtime: boolean }
 
 export type DeploymentStatus = 'queued' | 'building' | 'deploying' | 'succeeded' | 'failed' | 'canceled'
 
@@ -53,6 +58,8 @@ export type Deployment = {
   commitSha: string
   commitMessage: string
   image: string
+  /** Si no está vacío, este deploy reutilizó la imagen de otro (rollback o reinicio). */
+  sourceDeploymentId: string
   error: string
   createdAt: string
   startedAt: string | null
@@ -82,6 +89,8 @@ export type Project = {
   baseImage: string
   buildCommand: string
   startCommand: string
+  cpuLimit: number | null
+  memoryLimitMb: number | null
   url: string
   containerName: string
   createdAt: string
@@ -89,7 +98,7 @@ export type Project = {
   activeDeploymentId: string
 }
 
-export type ProjectDetail = Project & { deployments: Deployment[] }
+export type ProjectDetail = Project & { deployments: Deployment[]; pending: PendingChanges }
 
 export type ContainerStatus = {
   state: 'running' | 'exited' | 'restarting' | 'created' | 'paused' | 'dead' | 'missing' | 'unknown'
@@ -100,6 +109,8 @@ export type ContainerStatus = {
   memoryUsage?: string
   memoryPercent?: number
   netIO?: string
+  /** IDs de deploys cuya imagen sigue en el servidor. */
+  images?: string[]
   error?: string
 }
 
@@ -120,6 +131,12 @@ export type CreateProjectInput = {
   baseImage?: string
   buildCommand?: string
   startCommand?: string
+}
+
+export type UpdateProjectInput = Omit<CreateProjectInput, 'serverId'> & {
+  clearToken?: boolean
+  cpuLimit: number | null
+  memoryLimitMb: number | null
 }
 
 /** "usuario/repo" a partir de la URL del repositorio. */
@@ -228,5 +245,47 @@ export function useDeleteProject() {
       qc.removeQueries({ queryKey: ['projects', id] })
       qc.invalidateQueries({ queryKey: ['projects'], exact: true })
     },
+  })
+}
+
+export function useUpdateProject(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: UpdateProjectInput) => api<Project>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  })
+}
+
+export function useEnv(id: string) {
+  return useQuery({
+    queryKey: ['projects', id, 'env'],
+    queryFn: () => api<{ vars: EnvVar[] }>(`/projects/${id}/env`),
+    select: (d) => d.vars,
+  })
+}
+
+export function useSetEnv(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: EnvVar[]) => api<{ vars: EnvVar[] }>(`/projects/${id}/env`, { method: 'PUT', body: JSON.stringify({ vars }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects', id] }),
+  })
+}
+
+/** Recrea el contenedor con la imagen actual para aplicar la configuración nueva. */
+export function useRestart(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api<Deployment>(`/projects/${projectId}/restart`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  })
+}
+
+/** Vuelve a publicar la imagen de un deploy anterior (rollback). */
+export function useRedeploy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (deploymentId: string) => api<Deployment>(`/deployments/${deploymentId}/redeploy`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
   })
 }
