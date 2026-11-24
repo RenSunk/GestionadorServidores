@@ -51,6 +51,8 @@ type Service struct {
 
 	mu      sync.Mutex
 	running map[string]*activeDeploy // por ID de proyecto
+	queued  map[string]Trigger       // deploy automático pendiente (llegó un push durante otro deploy)
+	polls   map[string]pollState     // última revisión periódica de cada proyecto
 }
 
 type activeDeploy struct {
@@ -82,6 +84,8 @@ func NewService(ctx context.Context, store *Store, srv Servers, box *secrets.Box
 		buildDir: buildDir,
 		rootCtx:  ctx,
 		running:  make(map[string]*activeDeploy),
+		queued:   make(map[string]Trigger),
+		polls:    make(map[string]pollState),
 	}, nil
 }
 
@@ -439,15 +443,22 @@ func (s *Service) GetDeployment(ctx context.Context, id string) (Deployment, err
 
 // Deploy clona, construye y publica la rama del proyecto en segundo plano.
 func (s *Service) Deploy(ctx context.Context, projectID string) (Deployment, error) {
+	return s.DeployWith(ctx, projectID, Trigger{Kind: TriggerManual})
+}
+
+// DeployWith es Deploy registrando qué lo disparó.
+func (s *Service) DeployWith(ctx context.Context, projectID string, t Trigger) (Deployment, error) {
 	p, err := s.store.GetProject(ctx, projectID)
 	if err != nil {
 		return Deployment{}, err
 	}
 	return s.start(ctx, p, Deployment{
-		ID:        uuid.Must(uuid.NewV7()).String(),
-		ProjectID: p.ID,
-		Status:    StatusQueued,
-		CreatedAt: time.Now().UTC(),
+		ID:          uuid.Must(uuid.NewV7()).String(),
+		ProjectID:   p.ID,
+		Status:      StatusQueued,
+		Trigger:     t.Kind,
+		TriggeredBy: t.By,
+		CreatedAt:   time.Now().UTC(),
 	})
 }
 
@@ -519,7 +530,16 @@ func (s *Service) start(ctx context.Context, p Project, d Deployment) (Deploymen
 func (s *Service) release(projectID string) {
 	s.mu.Lock()
 	delete(s.running, projectID)
+	next, hasNext := s.queued[projectID]
+	delete(s.queued, projectID)
 	s.mu.Unlock()
+
+	// Un push que llegó durante el deploy: se despliega ahora (incluye todos los commits).
+	if hasNext && s.rootCtx.Err() == nil {
+		if _, err := s.DeployWith(s.rootCtx, projectID, next); err != nil && !errors.Is(err, ErrDeployInProgress) {
+			slog.Error("deploy en cola", "project", projectID, "err", err)
+		}
+	}
 }
 
 // Cancel detiene un deploy en curso.

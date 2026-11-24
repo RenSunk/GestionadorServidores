@@ -116,6 +116,17 @@ Cada servidor con dominios tiene un contenedor **Caddy** (`gestionador-caddy`) e
 - **Deploy sin corte**: si el proyecto tiene dominio y no publica un puerto, el contenedor nuevo arranca junto al actual; cuando responde, Caddy cambia el tráfico y recién entonces se apaga el anterior. Si el nuevo no responde, la versión actual sigue atendiendo.
 - Los puertos de Caddy se pueden cambiar en la página del servidor (por defecto 80/443), útil si ya están ocupados.
 
+## Deploy automático (fase 5)
+
+En la configuración del proyecto, **Deploy automático** despliega la rama cada vez que haces push. Hay dos formas, y se pueden usar juntas:
+
+- **Webhook** (instantáneo): GitHub, GitLab, Gitea/Forgejo y Bitbucket. Cada proyecto tiene su URL (`/hooks/git/<id>`) y un secreto con el que se verifica la firma de cada entrega. También acepta `X-Gestionador-Token: <secreto>` para dispararlo desde un CI con `curl`. Requiere que el proveedor pueda llegar a Gestionador.
+- **Revisión periódica** (cada 1, 5, 15 o 60 minutos): compara el último commit de la rama con el último desplegado. Funciona aunque Gestionador esté detrás de NAT o en tu PC. No reintenta un commit cuyo deploy falló.
+
+Si llega un push durante un deploy, queda uno en cola y se despliega al terminar. El historial indica qué disparó cada deploy y la interfaz muestra el resultado del último webhook (aceptado, ignorado por la rama o rechazado por la firma).
+
+> Gestionador todavía no tiene usuarios (fase 6): no lo expongas completo a internet. Si necesitas webhooks antes, publica solo la ruta `/hooks/` detrás de un proxy.
+
 ## Roadmap
 
 - [x] Fase 0 — Estructura: binario único, SQLite/Postgres, migraciones, cifrado de secretos
@@ -123,6 +134,6 @@ Cada servidor con dominios tiene un contenedor **Caddy** (`gestionador-caddy`) e
 - [x] Fase 2 — Proyectos desde Git con Dockerfile: build, deploy y logs
 - [x] Detección del lenguaje y Dockerfile generado para proyectos sin Dockerfile
 - [x] Fase 3 — Variables de entorno, límites de CPU/RAM, edición y rollback
-- [x] Fase 4 — Dominios + SSL con Caddy y deploy sin corte (falta probar Let's Encrypt con un dominio real)
-- [ ] Fase 5 — Webhooks de Git (deploy automático al hacer push)
+- [x] Fase 4 — Dominios + SSL automático con Caddy (Let's Encrypt verificado en un servidor real) y deploy sin corte
+- [x] Fase 5 — Webhooks de Git (deploy automático al hacer push)
 - [ ] Fase 6 — Usuarios, equipos y permisos; métricas históricas y alertas

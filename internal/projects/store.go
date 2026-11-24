@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -23,7 +24,8 @@ func NewStore(db *database.DB) *Store {
 const projectColumns = `p.id, p.name, p.slug, p.server_id, p.repo_url, p.branch, p.git_username, p.git_token_enc,
 	p.root_dir, p.dockerfile, p.container_port, p.host_port, p.build_type, p.runtime, p.runtime_version,
 	p.base_image, p.build_command, p.start_command, p.env_enc, p.cpu_limit_milli, p.memory_limit_mb,
-	p.build_config_updated_at, p.runtime_config_updated_at, COALESCE(p.live_deployment_id, ''), p.created_at, p.updated_at, s.name, s.host`
+	p.build_config_updated_at, p.runtime_config_updated_at, COALESCE(p.live_deployment_id, ''),
+	p.auto_deploy, p.webhook_secret_enc, p.poll_interval_min, p.last_hook_at, p.last_hook_result, p.created_at, p.updated_at, s.name, s.host`
 
 const projectFrom = ` FROM projects p JOIN servers s ON s.id = p.server_id`
 
@@ -34,14 +36,17 @@ func scanProject(row scanner) (Project, error) {
 		p                  Project
 		hostPort, cpu, mem sql.NullInt64
 		buildAt, runtimeAt sql.NullTime
+		hookAt             sql.NullTime
 	)
 	err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.ServerID, &p.RepoURL, &p.Branch, &p.GitUsername, &p.GitTokenEnc,
 		&p.RootDir, &p.Dockerfile, &p.ContainerPort, &hostPort, &p.BuildType, &p.Build.Runtime, &p.Build.Version,
 		&p.Build.BaseImage, &p.Build.BuildCommand, &p.Build.StartCommand, &p.EnvEnc, &cpu, &mem,
-		&buildAt, &runtimeAt, &p.LiveDeploymentID, &p.CreatedAt, &p.UpdatedAt, &p.ServerName, &p.ServerHost)
+		&buildAt, &runtimeAt, &p.LiveDeploymentID,
+		&p.AutoDeploy, &p.WebhookSecretEnc, &p.PollIntervalMin, &hookAt, &p.LastHookResult, &p.CreatedAt, &p.UpdatedAt, &p.ServerName, &p.ServerHost)
 	p.Build.Port = p.ContainerPort
 	p.HostPort, p.CPULimitMilli, p.MemoryLimitMB = nullInt(hostPort), nullInt(cpu), nullInt(mem)
 	p.BuildConfigUpdatedAt, p.RuntimeConfigUpdatedAt = nullTime(buildAt), nullTime(runtimeAt)
+	p.LastHookAt = nullTime(hookAt)
 	return p, err
 }
 
@@ -146,7 +151,7 @@ func (st *Store) DeleteProject(ctx context.Context, id string) error {
 // ---------- Deploys ----------
 
 // Las listas no incluyen el log (puede pesar hasta 2 MB por deploy).
-const deploymentColumns = `id, project_id, status, commit_sha, commit_message, image, source_deployment_id, error, created_at, started_at, finished_at`
+const deploymentColumns = `id, project_id, status, commit_sha, commit_message, image, source_deployment_id, trigger_kind, triggered_by, error, created_at, started_at, finished_at`
 
 func scanDeployment(row scanner, withLog bool) (Deployment, error) {
 	var (
@@ -154,7 +159,7 @@ func scanDeployment(row scanner, withLog bool) (Deployment, error) {
 		started, finished sql.NullTime
 		source            sql.NullString
 	)
-	dest := []any{&d.ID, &d.ProjectID, &d.Status, &d.CommitSHA, &d.CommitMessage, &d.Image, &source, &d.Error,
+	dest := []any{&d.ID, &d.ProjectID, &d.Status, &d.CommitSHA, &d.CommitMessage, &d.Image, &source, &d.Trigger, &d.TriggeredBy, &d.Error,
 		&d.CreatedAt, &started, &finished}
 	if withLog {
 		dest = append(dest, &d.Log)
@@ -174,9 +179,11 @@ func scanDeployment(row scanner, withLog bool) (Deployment, error) {
 
 func (st *Store) CreateDeployment(ctx context.Context, d Deployment) error {
 	_, err := st.db.ExecContext(ctx, `
-		INSERT INTO deployments (id, project_id, status, commit_sha, commit_message, image, source_deployment_id, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		d.ID, d.ProjectID, d.Status, d.CommitSHA, d.CommitMessage, d.Image, nullString(d.SourceDeploymentID), d.CreatedAt)
+		INSERT INTO deployments (id, project_id, status, commit_sha, commit_message, image, source_deployment_id,
+			trigger_kind, triggered_by, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		d.ID, d.ProjectID, d.Status, d.CommitSHA, d.CommitMessage, d.Image, nullString(d.SourceDeploymentID),
+		cmp.Or(d.Trigger, TriggerManual), d.TriggeredBy, d.CreatedAt)
 	return err
 }
 

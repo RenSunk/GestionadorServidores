@@ -84,6 +84,14 @@ func run() error {
 	// stop() cancela los deploys en curso; Wait espera a que guarden su estado.
 	defer func() { stop(); projectsSvc.Wait() }()
 
+	// Revisión periódica de repositorios (deploy automático sin webhook).
+	pollerDone := make(chan struct{})
+	go func() {
+		defer close(pollerDone)
+		projectsSvc.RunPoller(ctx)
+	}()
+	defer func() { stop(); <-pollerDone }()
+
 	srv := server.New(server.Deps{
 		DB:      db,
 		Version: version,

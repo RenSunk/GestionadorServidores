@@ -60,6 +60,8 @@ export type EnvVar = { key: string; value: string; build: boolean }
 
 export type PendingChanges = { build: boolean; runtime: boolean }
 
+export type DeployTrigger = 'manual' | 'webhook' | 'poll'
+
 export type DeploymentStatus = 'queued' | 'building' | 'deploying' | 'succeeded' | 'failed' | 'canceled'
 
 export type Deployment = {
@@ -71,6 +73,9 @@ export type Deployment = {
   image: string
   /** Si no está vacío, este deploy reutilizó la imagen de otro (rollback o reinicio). */
   sourceDeploymentId: string
+  trigger: DeployTrigger
+  /** Autor del push (webhook) o commit detectado (revisión periódica). */
+  triggeredBy: string
   error: string
   createdAt: string
   startedAt: string | null
@@ -104,6 +109,7 @@ export type Project = {
   memoryLimitMb: number | null
   url: string
   domains: string[]
+  autoDeploy: boolean
   containerName: string
   createdAt: string
   lastDeployment: Deployment | null
@@ -359,5 +365,47 @@ export function useSetProxyPorts(serverId: string) {
     mutationFn: (ports: { httpPort: number; httpsPort: number }) =>
       api<ProxyInfo>(`/servers/${serverId}/proxy`, { method: 'PUT', body: JSON.stringify(ports) }),
     onSuccess: (info) => qc.setQueryData(['servers', serverId, 'proxy'], info),
+  })
+}
+
+// ---------- Deploy automático ----------
+
+export type AutoDeploy = {
+  enabled: boolean
+  pollMinutes: number
+  hookPath: string
+  secret: string
+  lastHookAt: string | null
+  lastHookResult: string
+  lastPollAt: string | null
+  lastPollResult: string
+  lastPollFailed: boolean
+}
+
+export function useAutoDeploy(projectId: string) {
+  return useQuery({
+    queryKey: ['projects', projectId, 'autodeploy'],
+    queryFn: () => api<AutoDeploy>(`/projects/${projectId}/autodeploy`),
+    refetchInterval: 15_000, // muestra el último webhook / revisión sin recargar
+  })
+}
+
+export function useSetAutoDeploy(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { enabled: boolean; pollMinutes: number }) =>
+      api<AutoDeploy>(`/projects/${projectId}/autodeploy`, { method: 'PUT', body: JSON.stringify(v) }),
+    onSuccess: (info) => {
+      qc.setQueryData(['projects', projectId, 'autodeploy'], info)
+      qc.invalidateQueries({ queryKey: ['projects', projectId], exact: true })
+    },
+  })
+}
+
+export function useRotateSecret(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api<AutoDeploy>(`/projects/${projectId}/autodeploy/secret`, { method: 'POST' }),
+    onSuccess: (info) => qc.setQueryData(['projects', projectId, 'autodeploy'], info),
   })
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -50,6 +51,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/servers/{id}/proxy", h.getProxy)
 	mux.HandleFunc("PUT /api/servers/{id}/proxy", h.setProxy)
 
+	mux.HandleFunc("GET /api/projects/{id}/autodeploy", h.getAutoDeploy)
+	mux.HandleFunc("PUT /api/projects/{id}/autodeploy", h.setAutoDeploy)
+	mux.HandleFunc("POST /api/projects/{id}/autodeploy/secret", h.rotateSecret)
+	// Público (lo llama el proveedor de Git): se autentica con la firma del secreto.
+	mux.HandleFunc("POST /hooks/git/{id}", h.gitHook)
+
 	mux.HandleFunc("GET /api/deployments/{id}", h.getDeployment)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", h.cancelDeployment)
 	mux.HandleFunc("POST /api/deployments/{id}/redeploy", h.redeploy)
@@ -83,6 +90,7 @@ type projectView struct {
 	MemoryLimitMB      *int        `json:"memoryLimitMb"`
 	URL                string      `json:"url"`
 	Domains            []string    `json:"domains"`
+	AutoDeploy         bool        `json:"autoDeploy"`
 	ContainerName      string      `json:"containerName"`
 	CreatedAt          time.Time   `json:"createdAt"`
 	LastDeployment     *Deployment `json:"lastDeployment"`
@@ -121,7 +129,8 @@ func (h *Handler) withDomains(ctx context.Context, v projectView, serverID strin
 func (h *Handler) view(p Project, last *Deployment) projectView {
 	v := projectView{
 		ID: p.ID, Name: p.Name, Slug: p.Slug, ServerID: p.ServerID, ServerName: p.ServerName,
-		RepoURL: p.RepoURL, Branch: p.Branch, GitUsername: p.GitUsername, HasToken: p.GitTokenEnc != "",
+		AutoDeploy: p.AutoDeploy,
+		RepoURL:    p.RepoURL, Branch: p.Branch, GitUsername: p.GitUsername, HasToken: p.GitTokenEnc != "",
 		RootDir: p.RootDir, Dockerfile: p.Dockerfile, ContainerPort: p.ContainerPort, HostPort: p.HostPort,
 		ContainerName: p.containerName(), CreatedAt: p.CreatedAt, LastDeployment: last,
 		ActiveDeploymentID: h.svc.ActiveDeploymentID(p.ID),
@@ -374,6 +383,50 @@ func (h *Handler) setProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, info)
+}
+
+func (h *Handler) getAutoDeploy(w http.ResponseWriter, r *http.Request) {
+	info, err := h.svc.AutoDeployInfo(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, info)
+}
+
+func (h *Handler) setAutoDeploy(w http.ResponseWriter, r *http.Request) {
+	var in AutoDeployInput
+	if err := httpx.DecodeJSON(w, r, &in); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	info, err := h.svc.SetAutoDeploy(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, info)
+}
+
+func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
+	info, err := h.svc.RotateSecret(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, info)
+}
+
+const maxHookBody = 10 << 20
+
+func (h *Handler) gitHook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxHookBody))
+	if err != nil {
+		httpx.WriteError(w, http.StatusRequestEntityTooLarge, "cuerpo demasiado grande")
+		return
+	}
+	res := h.svc.HandleHook(r.Context(), r.PathValue("id"), r.Header, body)
+	httpx.WriteJSON(w, res.Status, res)
 }
 
 func (h *Handler) restart(w http.ResponseWriter, r *http.Request) {

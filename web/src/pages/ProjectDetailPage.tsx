@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { DeploymentBadge } from '../components/DeploymentBadge.tsx'
 import { ProjectDockerfile } from '../components/DockerfilePreview.tsx'
 import { DomainsPanel } from '../components/DomainsPanel.tsx'
+import { AutoDeployCard } from '../components/AutoDeployCard.tsx'
 import { EnvEditor } from '../components/EnvEditor.tsx'
 import { LogViewer } from '../components/LogViewer.tsx'
 import { Meter } from '../components/Meter.tsx'
@@ -277,6 +278,8 @@ function DeploymentsList({ project: p }: { project: ProjectDetail }) {
                   <div className="text-xs text-zinc-500">
                     {d.commitSha && <span className="font-mono">{d.commitSha.slice(0, 7)} · </span>}
                     {d.sourceDeploymentId && <span>↺ sin rebuild · </span>}
+                    {d.trigger === 'webhook' && <span>⚡ push{d.triggeredBy ? ` de ${d.triggeredBy}` : ''} · </span>}
+                    {d.trigger === 'poll' && <span>⟳ revisión automática · </span>}
                     {formatRelative(d.createdAt)}
                   </div>
                 </div>
@@ -325,6 +328,7 @@ function Settings({ project: p }: { project: ProjectDetail }) {
 
   return (
     <div className="space-y-6">
+      <AutoDeployCard project={p} />
       <EnvEditor project={p} />
       <ProjectSettingsForm project={p} buildArgs={buildArgs} />
 

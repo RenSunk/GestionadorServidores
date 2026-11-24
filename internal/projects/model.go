@@ -34,8 +34,14 @@ type Project struct {
 	BuildConfigUpdatedAt   *time.Time
 	RuntimeConfigUpdatedAt *time.Time
 	LiveDeploymentID       string // deploy cuyo contenedor recibe el tráfico ("" = anterior a la fase 4)
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	// Deploy automático (fase 5).
+	AutoDeploy       bool
+	WebhookSecretEnc string // nunca sale por la API así
+	PollIntervalMin  int    // 0 = sin revisión periódica
+	LastHookAt       *time.Time
+	LastHookResult   string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 
 	// Solo lectura (JOIN con servers).
 	ServerName string
@@ -77,6 +83,8 @@ type Deployment struct {
 	// SourceDeploymentID: si no está vacío, este deploy reutilizó la imagen de otro
 	// (rollback o reinicio) en vez de construir una nueva.
 	SourceDeploymentID string     `json:"sourceDeploymentId"`
+	Trigger            string     `json:"trigger"`     // manual, webhook, poll
+	TriggeredBy        string     `json:"triggeredBy"` // ej. autor del push
 	Error              string     `json:"error"`
 	Log                string     `json:"-"`
 	CreatedAt          time.Time  `json:"createdAt"`

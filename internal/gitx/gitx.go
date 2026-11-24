@@ -58,18 +58,24 @@ func ValidateURL(raw string) error {
 
 // Check verifica que el repo es accesible y que la rama existe, sin clonar.
 func Check(ctx context.Context, r Repo) error {
+	_, err := RemoteHead(ctx, r)
+	return err
+}
+
+// RemoteHead devuelve el último commit de la rama sin clonar (como git ls-remote).
+func RemoteHead(ctx context.Context, r Repo) (string, error) {
 	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{Name: "origin", URLs: []string{r.URL}})
 	refs, err := remote.ListContext(ctx, &git.ListOptions{Auth: r.auth()})
 	if err != nil {
-		return friendly(err, r.Token != "")
+		return "", friendly(err, r.Token != "")
 	}
 	want := plumbing.NewBranchReferenceName(r.Branch)
 	for _, ref := range refs {
 		if ref.Name() == want {
-			return nil
+			return ref.Hash().String(), nil
 		}
 	}
-	return fmt.Errorf("la rama %q no existe en el repositorio", r.Branch)
+	return "", fmt.Errorf("la rama %q no existe en el repositorio", r.Branch)
 }
 
 // Commit describe el commit desplegado.
