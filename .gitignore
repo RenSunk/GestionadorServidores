@@ -1,0 +1,9 @@
+# Binarios compilados
+/bin/
+
+# Datos locales de desarrollo (SQLite, clave maestra)
+/data/
+
+# Variables de entorno locales
+.env
+.env.*
